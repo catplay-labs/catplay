@@ -77,14 +77,9 @@ impl ScreenTransmitSink for ScreenTransmitProxy {
             return Err(ScreenTransmitError::Closed);
         }
 
-        // One config frame per stream, as an iPhone sends: it repeats neither the config nor the
-        // opening marker for later keyframes.
-        if let Some(last_config) = self.last_config.as_ref()
-            && last_config == &config
-        {
-            return Ok(());
-        }
-
+        // Not deduplicated: a config frame goes out for exactly the frames the sender attaches one
+        // to, so the sender can answer a receiver that has lost its decoder without this second
+        // guessing it.
         let mut ops = self.queue.lock().unwrap();
         ops.push_back(ScreenTransmitOp::Configure(config.clone(), pts));
         self.last_config.replace(config);
@@ -173,9 +168,10 @@ mod tests {
         }
     }
 
-    /// A phone sends one config frame per stream; ours must not repeat it for every keyframe.
+    /// Which keyframes carry a config is the sender's decision - an unchanged one still goes out
+    /// when it attaches it, because that is how it answers a `ForceKeyFrame`.
     #[test]
-    fn an_unchanged_config_is_sent_once() {
+    fn an_unchanged_config_still_goes_out_when_attached() {
         let queue = Arc::new(Mutex::new(VecDeque::new()));
         let mut proxy = ScreenTransmitProxy::new(
             Duration::ZERO,
@@ -191,6 +187,6 @@ mod tests {
         proxy.push_avcc_config(config(), pts).unwrap();
 
         let queued = queue.lock().unwrap().iter().filter(|op| op.is_configure()).count();
-        assert_eq!(queued, 1);
+        assert_eq!(queued, 2);
     }
 }
