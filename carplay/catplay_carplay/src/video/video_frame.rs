@@ -23,6 +23,9 @@ pub struct EncodedVideoFrame {
     pub nal_offsets: Option<Vec<NalChunk>>,
     /// Keyframe status of this frame, if known
     pub is_keyframe: Option<bool>,
+    /// Set when `data` already carries AVCC/HVCC length prefixes, so the transmit path leaves it
+    /// alone instead of converting from AnnexB.
+    pub length_prefixed: bool,
 
     /// 128b [ScreenFrame] header slice (optional)
     pub header_buf: BytesMut,

@@ -43,7 +43,11 @@ impl ScreenFrame {
 
     /// Convert [EncodedVideoFrame] back to [ScreenFrame] in an optimal fashion.
     pub fn video_proxied(other: EncodedVideoFrame, nal_size_len: usize, clock: &dyn MediaClock) -> Result<Self, NalError> {
-        let mut me = Self::video_annexb_cached(other.data, nal_size_len, other.pts.0, clock, other.nal_offsets.unwrap_or_default())?;
+        let mut me = if other.length_prefixed {
+            Self::video_avcc(other.data, other.pts.0, clock)
+        } else {
+            Self::video_annexb_cached(other.data, nal_size_len, other.pts.0, clock, other.nal_offsets.unwrap_or_default())?
+        };
         me.header_buf = other.header_buf;
         me.chacha_tag_buf = other.chacha_tag_buf;
 
@@ -138,6 +142,7 @@ impl ScreenFrame {
             config: Some(config.clone()),
             nal_offsets: Some(self.nal_offset_cache),
             is_keyframe: Some(is_keyframe),
+            length_prefixed: false,
             chacha_tag_buf: self.chacha_tag_buf,
             header_buf: self.header_buf,
         }))
@@ -285,7 +290,7 @@ plist_struct! {
 mod reference_tests {
     use super::*;
     use crate::clock::MediaClockSession;
-    use crate::video::{AvccConfig, VideoView, hvcc_config_serialize};
+    use crate::video::{AvccConfig, EncodedVideoFrame, Pts, VideoView, hvcc_config_serialize};
 
     /// The header and sample-entry bytes an iPhone sends this CFMOTO head unit, from
     /// `carjack/logs/cfmoto-iphone.pcapng`. Ours has to agree with it everywhere the value is not
@@ -364,6 +369,29 @@ mod reference_tests {
         .expect("and serializes back");
 
         assert_eq!(ours, reference, "hvcC must match the iPhone's byte for byte");
+    }
+
+    /// A sender whose encoder already emits AVCC/HVCC hands us the sample as it is; converting it
+    /// again would read the length prefixes as start codes and corrupt every frame.
+    #[test]
+    fn a_length_prefixed_frame_is_passed_through() {
+        let sample = [0u8, 0, 0, 4, 0x26, 0x01, 0xaf, 0xe0];
+        let frame = EncodedVideoFrame {
+            pts: Pts(Instant::now()),
+            width: 800,
+            height: 1280,
+            data: BytesMut::from(&sample[..]),
+            config: None,
+            nal_offsets: None,
+            is_keyframe: Some(true),
+            length_prefixed: true,
+            header_buf: BytesMut::new(),
+            chacha_tag_buf: BytesMut::new(),
+        };
+
+        let screen = ScreenFrame::video_proxied(frame, 4, &MediaClockSession::new()).unwrap();
+
+        assert_eq!(&screen.data[..], &sample[..]);
     }
 
     /// The phone's keep-alives carry its own view of the stream as a binary plist, with the body

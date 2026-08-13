@@ -130,6 +130,7 @@ impl UiRenderer {
                 width: self.width as _,
                 height: self.height as _,
                 respect_timestamps: true,
+                view: None,
             }),
             nal_offsets: Some(vec![NalChunk {
                 prefix_start: 0,
@@ -137,6 +138,7 @@ impl UiRenderer {
                 data_size: frame_len.saturating_sub(4),
             }]),
             is_keyframe: Some(true),
+            length_prefixed: false,
             chacha_tag_buf: BytesMut::new(),
             header_buf: BytesMut::new(),
         }
@@ -222,6 +224,7 @@ impl UiRenderer {
                 width: self.width as _,
                 height: self.height as _,
                 respect_timestamps: true,
+                view: None,
             }),
             nal_offsets: Some(vec![NalChunk {
                 prefix_start: 0,
@@ -229,6 +232,7 @@ impl UiRenderer {
                 data_size: frame_len.saturating_sub(4),
             }]),
             is_keyframe: Some(true),
+            length_prefixed: false,
             chacha_tag_buf: BytesMut::new(),
             header_buf: BytesMut::new(),
         })
