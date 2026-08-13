@@ -77,11 +77,14 @@ impl ScreenTransmitSink for ScreenTransmitProxy {
             return Err(ScreenTransmitError::Closed);
         }
 
-        // Deliberately not deduplicated against the last config. A config frame accompanies
-        // exactly the frames the sender attaches one to - its keyframes - and it is what tells a
-        // receiver that a decoder can start here: sent once, every later keyframe is
-        // indistinguishable from a delta frame on the wire, and a receiver that has lost its
-        // decoder asks for a keyframe it cannot recognise when it arrives.
+        // One config frame per stream, as an iPhone sends: it repeats neither the config nor the
+        // opening marker for later keyframes.
+        if let Some(last_config) = self.last_config.as_ref()
+            && last_config == &config
+        {
+            return Ok(());
+        }
+
         let mut ops = self.queue.lock().unwrap();
         ops.push_back(ScreenTransmitOp::Configure(config.clone(), pts));
         self.last_config.replace(config);
@@ -170,10 +173,9 @@ mod tests {
         }
     }
 
-    /// Every keyframe carries its config to the wire, unchanged config or not: it is what marks a
-    /// point the receiver's decoder can start from.
+    /// A phone sends one config frame per stream; ours must not repeat it for every keyframe.
     #[test]
-    fn an_unchanged_config_still_goes_out_again() {
+    fn an_unchanged_config_is_sent_once() {
         let queue = Arc::new(Mutex::new(VecDeque::new()));
         let mut proxy = ScreenTransmitProxy::new(
             Duration::ZERO,
@@ -189,6 +191,6 @@ mod tests {
         proxy.push_avcc_config(config(), pts).unwrap();
 
         let queued = queue.lock().unwrap().iter().filter(|op| op.is_configure()).count();
-        assert_eq!(queued, 2);
+        assert_eq!(queued, 1);
     }
 }
