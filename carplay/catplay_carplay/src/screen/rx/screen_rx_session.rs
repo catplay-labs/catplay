@@ -141,6 +141,10 @@ impl TcpSession for ScreenReceiverSession {
 
             ScreenOpCode::KeepAlive | ScreenOpCode::KeepAliveWithBody => {
                 trace!("Received screen keep alive: opcode {:?}", msg.header.opcode);
+
+                if let Some(stats) = msg.sender_stats_decode() {
+                    debug!("Received screen sender stats: {stats:?}");
+                }
             }
             _ => {
                 debug!("Received unknown video frame: {:?}", msg.header);

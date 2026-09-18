@@ -1,7 +1,8 @@
 use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
-use log::debug;
+use catplay_plist::{PlistSerializable, plist_struct};
+use log::{debug, warn};
 
 use crate::{
     clock::{MediaClock, NtpU64},
@@ -217,5 +218,43 @@ impl ScreenFrame {
         let header = &mut frame.header;
         header.opcode = ScreenOpCode::KeepAlive;
         frame
+    }
+
+    pub fn keep_alive_with_stats(stats: &ScreenSenderStats) -> Self {
+        let Ok(body) = stats.pencode() else {
+            return Self::keep_alive();
+        };
+        let mut frame = ScreenFrame::default();
+        frame.header.opcode = ScreenOpCode::KeepAliveWithBody;
+        //Observed that iphone sends param[14] as frame len
+        frame.header.params[14] = Value64::from_f32(0.0, body.len() as f32);
+        frame.data = body;
+        frame
+    }
+
+    pub fn sender_stats_decode(&self) -> Option<ScreenSenderStats> {
+        if self.header.opcode != ScreenOpCode::KeepAliveWithBody {
+            return None;
+        }
+
+        match ScreenSenderStats::pdecode(&self.data) {
+            Ok(stats) => Some(stats),
+            Err(e) => {
+                warn!("Unreadable keep-alive body ({} bytes): {e:?}", self.data.len());
+                None
+            }
+        }
+    }
+}
+
+plist_struct! {
+    pub struct ScreenSenderStats {
+        /// Bytes per second written to the screen socket over the last interval.
+        pub tx_usage_avg: f64,
+        #[serde(rename = "encoderCurrentFPS")]
+        pub encoder_current_fps: u32,
+        pub sent_frames_avg: u32,
+        pub queued_frames_avg: u32,
+        pub loss_avg: f64,
     }
 }
