@@ -395,40 +395,25 @@ impl CarManager {
     pub fn on_patch_info(&mut self, info: &mut InfoMessageResponse) {
         let car = self.car_state.clone();
 
-        let info_patched = {
-            let other = car.info_cached().clone();
-            info!("CarPlay info of the car: {other:?}");
+        let other = car.info_cached().clone();
+        let car_features = other.features.bits();
+        info!(
+            "CarPlay info probe: local_features={:#x} car_features={:#x} car_displays={}",
+            info.features.bits(),
+            car_features,
+            other.displays.len()
+        );
 
-            // Sync data based on car probe
-            // Time-sensitive fields: modes, night_mode (best-effort initial sync)
-            // Use cached info; protocol says /info could be called more than once, but that never happens in practice.
-            let info_clone = info.clone();
-
-            InfoMessageResponse {
-                hid_devices: other.hid_devices,
-                hid_languages: other.hid_languages,
-                right_hand_drive: other.right_hand_drive,
-
-                night_mode: Some(self.night_mode.into()),
-                modes: self.modes.modes_mut().serialize_to_info_request(),
-
-                oem_icon: other.oem_icon,
-                oem_icon_label: Some("CatPlay".into()),
-                oem_icon_visible: other.oem_icon_visible,
-                oem_icons: other.oem_icons,
-
-                manufacturer: other.manufacturer,
-                model: other.model,
-                displays: other.displays,
-
-                audio_latencies: other.audio_latencies,
-                features: other.features,
-
-                ..info_clone
-            }
-        };
-        *info = info_patched;
-        info!("CarPlay info returned to iPhone (merged): {info:?}");
+        super::info_merge::merge_car_info(info, other);
+        // Time-sensitive fields stay with the runtime arbiter (best-effort initial sync).
+        info.night_mode = Some(self.night_mode.into());
+        info.modes = self.modes.modes_mut().serialize_to_info_request();
+        info!(
+            "CarPlay info merged: local_features={:#x} car_features={:#x} displays={}",
+            info.features.bits(),
+            car_features,
+            info.displays.len()
+        );
     }
 
     pub fn on_iphone_command(&mut self, command: &Command, response: oneshot::Sender<RtspResponse>) {

@@ -1,5 +1,6 @@
 mod car_manager;
 mod car_to_iphone_command_task;
+mod info_merge;
 mod modes_arbiter;
 mod overlay_default;
 mod overlay_manager;

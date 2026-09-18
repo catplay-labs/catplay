@@ -540,6 +540,15 @@ impl AirPlayReceiver {
         Self::setup_audio_defaults(&mut r);
 
         self.sink.on_info(&mut r).await;
+        let before = r.displays.len();
+        self.profile.constrain_info(&mut r).map_err(RtspError::ProtocolViolation)?;
+        if self.profile == AirPlayReceiverProfile::CarPlay {
+            let display = &r.displays[0];
+            info!(
+                "CarPlay RX /info: displays={}->1 main={}x{} altScreen=false",
+                before, display.width_pixels, display.height_pixels
+            );
+        }
         self.modes = AirPlayModeState::new(&r.modes);
 
         if self.features.contains(AirPlayFeature::CAR) && Self::CARPLAY_FORCE_HEVC {
@@ -879,6 +888,14 @@ impl AirPlayReceiver {
 
         if self.features.contains(AirPlayFeature::CAR) && Self::CARPLAY_FORCE_HEVC {
             r.enabled_features.push(ControllerFeature::Hevc);
+        }
+
+        if self.profile == AirPlayReceiverProfile::CarPlay {
+            info!(
+                "CarPlay RX initialSetup: altScreen={} hevc={}",
+                r.enabled_features.contains(&ControllerFeature::AltScreen),
+                r.enabled_features.contains(&ControllerFeature::Hevc)
+            );
         }
 
         self.streams.keep_alive_socket.replace(keep_alive_socket);

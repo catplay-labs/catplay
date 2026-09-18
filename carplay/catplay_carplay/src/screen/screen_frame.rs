@@ -195,6 +195,36 @@ pub struct ScreenFrame {
 }
 
 impl ScreenFrame {
+    pub fn keep_alive() -> Self {
+        let mut frame = Self::default();
+        frame.header.opcode = ScreenOpCode::KeepAlive;
+        frame
+    }
+
+    /// Minimal `keepAliveSendStatsAsBody` heartbeat, not full statistics telemetry.
+    /// Optional metric meanings are unknown, so send an empty dictionary rather than
+    /// fabricated measurements. MHI2Q rejects zero-length bodies before opcode dispatch;
+    /// its nonempty opcode-5 path refreshes activity without inspecting the plist.
+    pub fn keep_alive_with_empty_stats() -> Self {
+        // Canonical bplist00: empty dictionary object, one-byte offset table, trailer.
+        // Precomputed to avoid fallible serialization and serializer allocations per tick.
+        const EMPTY_DICT: &[u8; 42] = b"bplist00\xd0\x08\
+            \x00\x00\x00\x00\x00\x00\x01\x01\
+            \x00\x00\x00\x00\x00\x00\x00\x01\
+            \x00\x00\x00\x00\x00\x00\x00\x00\
+            \x00\x00\x00\x00\x00\x00\x00\x09";
+        let mut frame = Self::default();
+        frame.header.opcode = ScreenOpCode::KeepAliveWithBody;
+        frame.header.body_size = EMPTY_DICT.len() as u32;
+        // iOS places the body length in the second float of the last parameter.
+        // Construct on the stack (Value64::from_f32 currently allocates a temporary Vec).
+        let mut length = [0; 8];
+        length[4..].copy_from_slice(&(EMPTY_DICT.len() as f32).to_le_bytes());
+        frame.header.params[14] = Value64::new(length);
+        frame.data.extend_from_slice(EMPTY_DICT);
+        frame
+    }
+
     pub fn new(header: ScreenFrameHeader, data: BytesMut) -> Self {
         Self {
             header,
@@ -247,6 +277,35 @@ impl ScreenFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use catplay_plist::{Dictionary, PlistSerializable, Value};
+
+    #[test]
+    fn keep_alive_with_empty_stats_wire() {
+        let frame = ScreenFrame::keep_alive_with_empty_stats();
+        let mut wire = BytesMut::new();
+        frame.write(&mut wire);
+        assert_eq!(ScreenFrameHeader::size(), 128);
+        assert_eq!(wire.len(), 128 + 42);
+        let mut expected = [0; 128];
+        expected[..4].copy_from_slice(&42u32.to_le_bytes());
+        expected[4] = 5;
+        expected[124..].copy_from_slice(&42f32.to_le_bytes());
+        assert_eq!(&wire[..128], &expected);
+        let header = ScreenFrameHeader::from_bytes(&wire).unwrap();
+        assert_eq!(header.body_size as usize, wire.len() - 128);
+        assert_eq!(header.params[14].as_f32(), (0.0, 42.0));
+        assert_eq!(Value::pdecode(&wire[128..]).unwrap(), Value::Dictionary(Dictionary::new()));
+        assert_eq!(Value::Dictionary(Dictionary::new()).pencode().unwrap(), frame.data);
+    }
+
+    #[test]
+    fn keep_alive_legacy_wire_unchanged() {
+        let mut wire = BytesMut::new();
+        ScreenFrame::keep_alive().write(&mut wire);
+        let mut expected = [0; 128];
+        expected[4] = 2;
+        assert_eq!(&wire[..], &expected);
+    }
 
     #[test]
     fn adjacent_slice_mut_ignores_empty_buffers() {

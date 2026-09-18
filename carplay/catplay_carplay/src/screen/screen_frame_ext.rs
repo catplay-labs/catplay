@@ -211,11 +211,4 @@ impl ScreenFrame {
             respect_timestamps: flags.contains(ScreenFlag::RespectTimestamps),
         })
     }
-
-    pub fn keep_alive() -> Self {
-        let mut frame = ScreenFrame::default();
-        let header = &mut frame.header;
-        header.opcode = ScreenOpCode::KeepAlive;
-        frame
-    }
 }

@@ -158,7 +158,18 @@ impl<'de> Deserialize<'de> for Command {
             CommandType::ForceKeyFrame => from_value(&from_nested(&mut map)?).map(Command::ForceKeyFrame),
             CommandType::HidSetInputMode => from_value(&from_nested(&mut map)?).map(Command::HidSetInputMode),
             CommandType::RequestSiri => from_value(&from_nested(&mut map)?).map(Command::RequestSiri),
-            CommandType::RequestUI => from_value(&from_nested(&mut map)?).map(Command::RequestUI),
+            // The car may request the default UI without a params envelope.
+            // Explicit params still go through the normal typed decoder.
+            CommandType::RequestUI => match map.remove("params") {
+                Some(Value::Dictionary(params)) => {
+                    if params.get("url").is_some_and(|url| !matches!(url, Value::String(_))) {
+                        return Err(serde::de::Error::custom("requestUI url must be a string"));
+                    }
+                    from_value(&Value::Dictionary(params)).map(Command::RequestUI)
+                }
+                Some(_) => return Err(serde::de::Error::custom("requestUI params must be a dictionary")),
+                None => Ok(Command::RequestUI(CommandRequestUI { url: None })),
+            },
             CommandType::SetNightMode => from_value(&from_nested(&mut map)?).map(Command::SetNightMode),
             CommandType::SetLimitedUI => from_value(&from_nested(&mut map)?).map(Command::SetLimitedUI),
             CommandType::IApSendMessage => from_value(&from_nested(&mut map)?).map(Command::IApSendMessage),
@@ -173,6 +184,10 @@ struct CommandRawTypeRef {
     #[serde(rename = "type")]
     command_type: RtspString,
 }
+
+#[cfg(test)]
+#[path = "command_tests.rs"]
+mod command_tests;
 
 #[cfg(test)]
 mod tests {

@@ -5,6 +5,10 @@ use crate::{
 };
 use catplay_plist::{FlexBool, PlistByteArray, plist_struct};
 
+#[cfg(test)]
+#[path = "info_tests.rs"]
+mod tests;
+
 plist_struct! {
     pub struct InfoMessage {
        pub qualifier: Option<Vec<String>>
@@ -115,6 +119,9 @@ plist_struct! {
 
 plist_struct! {
     pub struct Display {
+        pub name: Option<String>,
+        #[serde(rename = "displayID")]
+        pub display_id: Option<DisplayId>,
         pub edid: Option<PlistByteArray>,
         pub features: DisplayFeature,
         #[serde(rename = "maxFPS")]
@@ -130,6 +137,25 @@ plist_struct! {
 }
 
 impl Display {
+    // Legacy MHI2Q uses the UUID itself as the alternate display's name.
+    // Do not infer roles from dimensions, array order, or numeric identifiers.
+    fn is_alternate(&self) -> bool {
+        fn alternate(name: &str) -> bool {
+            name.eq_ignore_ascii_case("alt")
+                || name.eq_ignore_ascii_case("alternate")
+                || name.eq_ignore_ascii_case("cluster")
+                || name.as_bytes().windows(9).any(|s| s.eq_ignore_ascii_case(b"altscreen"))
+        }
+        alternate(&self.uuid) || self.name.as_deref().is_some_and(alternate)
+    }
+
+    fn is_named_main(&self) -> bool {
+        fn main(name: &str) -> bool {
+            name.eq_ignore_ascii_case("main") || name.eq_ignore_ascii_case("mainScreen") || name.eq_ignore_ascii_case("primary")
+        }
+        !self.is_alternate() && (main(&self.uuid) || self.name.as_deref().is_some_and(main))
+    }
+
     pub fn dpi(&self) -> f32 {
         const FALLBACK_DPI: f32 = 160.0;
         const MIN_DPI: f32 = 60.0;
@@ -148,7 +174,9 @@ impl Display {
 plist_struct! {
     pub struct HidDevice {
         #[serde(rename = "displayUUID")]
-        pub display_uuid: String,
+        pub display_uuid: Option<String>,
+        #[serde(rename = "displayID")]
+        pub display_id: Option<DisplayId>,
         pub hid_country_code: u16,
         pub hid_descriptor: PlistByteArray,
         #[serde(rename = "hidProductID")]
@@ -157,5 +185,54 @@ plist_struct! {
         pub hid_vendor_id: u16,
         pub name: String,
         pub uuid: String,
+    }
+}
+
+/// Keep identifier types and namespaces intact: displayID 7, displayID "7",
+/// displayUUID "7", and a HID's own uuid are not interchangeable.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum DisplayId {
+    String(String),
+    Number(u64),
+}
+
+impl InfoMessageResponse {
+    /// Restrict this advertisement to the receiver's single main-screen transport.
+    /// Call after all sink/application patches, and only for the CarPlay profile.
+    /// This does not negotiate or implement altScreen.
+    pub fn retain_main_screen_only(&mut self) -> Result<(), &'static str> {
+        let mut named = self.displays.iter().enumerate().filter(|(_, d)| d.is_named_main());
+        let main = named.next().map(|(i, _)| i);
+        if named.next().is_some() {
+            return Err("ambiguous main displays");
+        }
+        // Legacy /info has no role metadata: retain the first non-alternate entry.
+        // In particular, an alternate-first list must not select the cluster.
+        let index = main
+            .or_else(|| self.displays.iter().position(|d| !d.is_alternate()))
+            .ok_or("missing main display")?;
+        let selected = &self.displays[index];
+        if selected.uuid.is_empty() || selected.width_pixels == 0 || selected.height_pixels == 0 {
+            return Err("invalid main display identity or dimensions");
+        }
+
+        self.hid_devices.retain(|hid| {
+            // Keep unassociated and unknown associations. Remove only a known
+            // removed-display association, never the HID's own device identity.
+            // A duplicated display identifier is ambiguous: favor preserving input.
+            let removed_uuid = hid
+                .display_uuid
+                .as_deref()
+                .filter(|id| !id.is_empty())
+                .is_some_and(|id| id != selected.uuid && self.displays.iter().any(|d| d.uuid == id));
+            let removed_id = hid.display_id.as_ref().is_some_and(|id| {
+                selected.display_id.as_ref() != Some(id) && self.displays.iter().any(|d| d.display_id.as_ref() == Some(id))
+            });
+            !removed_uuid && !removed_id
+        });
+        self.displays.swap(0, index);
+        self.displays.truncate(1);
+        Ok(())
     }
 }

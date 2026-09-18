@@ -293,14 +293,8 @@ impl AirPlayTransmitterImpl {
             }
         }
 
-        let display = self
-            .streams
-            .info
-            .as_ref()
-            .ok_or(RtspError::ProtocolViolation("missing info"))?
-            .displays
-            .first()
-            .ok_or(RtspError::ProtocolViolation("missing display"))?;
+        let info = self.streams.info.as_ref().ok_or(RtspError::ProtocolViolation("missing info"))?;
+        let display = info.displays.first().ok_or(RtspError::ProtocolViolation("missing display"))?;
         let media_clock = self.streams.media_clock.as_ref().ok_or(RtspError::ProtocolViolation("missing clock"))?;
         let client = self.streams.client.as_ref().ok_or(RtspError::ProtocolViolation("client missing"))?;
         let id = rand::random::<u64>().saturating_add(1);
@@ -313,6 +307,7 @@ impl AirPlayTransmitterImpl {
             ScreenTransmitSession::DEFAULT_KEEP_ALIVE,
             latency,
         );
+        let session = session.with_keep_alive_send_stats_as_body(info.keep_alive_send_stats_as_body);
 
         let display_uuid = display.uuid.clone();
         let setup = Setup::new(&[StreamDescriptionScreen::new(id, latency, &display_uuid).into()]);

@@ -56,6 +56,16 @@ pub enum AirPlayReceiverProfile {
     AppleTV,
 }
 
+impl AirPlayReceiverProfile {
+    /// Apply local transport limits after the sink has finished patching /info.
+    pub fn constrain_info(self, info: &mut InfoMessageResponse) -> Result<(), &'static str> {
+        match self {
+            Self::CarPlay => info.retain_main_screen_only(),
+            Self::AppleTV => Ok(()),
+        }
+    }
+}
+
 /// Informations needed to bootstrap AirPlay receiver session.
 pub struct AirPlayReceiverBootstrap {
     pub iface: String,
