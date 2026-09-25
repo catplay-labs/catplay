@@ -4,7 +4,7 @@ use catplay_bonjour::{Bonjour, BonjourEntryHandle, BonjourType};
 use catplay_util::{AbortOnDropHandle, sleep, spawn};
 use log::debug;
 use macaddr::MacAddr6;
-use tokio::{select, };
+use tokio::select;
 
 use crate::ctrl::{CarPlayCtrlBonjourEntry, CarPlayCtrlClient};
 

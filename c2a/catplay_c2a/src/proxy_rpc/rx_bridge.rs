@@ -68,7 +68,9 @@ impl AirPlayReceiverSink for CarPlayRxSession {
         duplex: bool,
     ) -> RtspResult<AudioPlayerBox<i16>> {
         self.reject_if_needed()?;
-        self.tx().proxy_audio(latency, stream_type, audio_type, audio_format, pcm_format, duplex).await
+        self.tx()
+            .proxy_audio(latency, stream_type, audio_type, audio_format, pcm_format, duplex)
+            .await
     }
 
     async fn open_microphone(
@@ -78,7 +80,9 @@ impl AirPlayReceiverSink for CarPlayRxSession {
         pcm_format: AudioStreamBasicDescription,
     ) -> RtspResult<AudioRecorderBox<i16>> {
         self.reject_if_needed()?;
-        self.tx().proxy_microphone(stream_type, audio_type, pcm_format).await
+        self.tx()
+            .proxy_microphone(stream_type, audio_type, pcm_format)
+            .await
     }
 
     async fn on_record(&mut self) -> RtspResult<()> {

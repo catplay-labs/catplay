@@ -214,12 +214,22 @@ impl RawMdnsBackend {
             auto_ips,
         };
 
-        let replaced = self.inner.state.registered.lock().unwrap().insert(meta.fullname.clone(), reg.clone());
+        let replaced = self
+            .inner
+            .state
+            .registered
+            .lock()
+            .unwrap()
+            .insert(meta.fullname.clone(), reg.clone());
         if let Some(old) = replaced {
             old.canceled.store(true, Ordering::Relaxed);
         }
 
-        let _ = self.inner.state.event_tx.send(RawMdnsEvent::Resolved(meta.clone()));
+        let _ = self
+            .inner
+            .state
+            .event_tx
+            .send(RawMdnsEvent::Resolved(meta.clone()));
         Self::reannounce_fullname(&self.inner.state, &meta.fullname);
 
         let state = self.inner.state.clone();
@@ -321,7 +331,10 @@ impl RawMdnsBackend {
             let mut removed = Vec::new();
             {
                 let mut guard = state.observed.lock().unwrap();
-                let keys: Vec<_> = guard.iter().filter_map(|(k, v)| if v.expires_at <= now { Some(k.clone()) } else { None }).collect();
+                let keys: Vec<_> = guard
+                    .iter()
+                    .filter_map(|(k, v)| if v.expires_at <= now { Some(k.clone()) } else { None })
+                    .collect();
                 for key in keys {
                     if let Some(value) = guard.remove(&key) {
                         removed.push((value.meta.service_type, key));
@@ -330,7 +343,9 @@ impl RawMdnsBackend {
             }
 
             for (service_type, fullname) in removed {
-                let _ = state.event_tx.send(RawMdnsEvent::Removed { service_type, fullname });
+                let _ = state
+                    .event_tx
+                    .send(RawMdnsEvent::Removed { service_type, fullname });
             }
         }
     }
@@ -509,7 +524,13 @@ impl RawMdnsBackend {
             return;
         }
 
-        let regs = state.registered.lock().unwrap().values().cloned().collect::<Vec<_>>();
+        let regs = state
+            .registered
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
         for reg in regs {
             let should_reply = questions.iter().any(|q| {
                 let name = q.name.to_ascii_lowercase();
@@ -552,12 +573,16 @@ impl RawMdnsBackend {
                     txt.insert(rr.name.clone(), (map.clone(), rr.ttl));
                 }
                 DnsRData::A(ip) => {
-                    let entry = host_ips.entry(dns_name_key(&rr.name)).or_insert_with(|| (Vec::new(), rr.ttl));
+                    let entry = host_ips
+                        .entry(dns_name_key(&rr.name))
+                        .or_insert_with(|| (Vec::new(), rr.ttl));
                     entry.0.push(IpAddr::V4(*ip));
                     entry.1 = entry.1.min(rr.ttl);
                 }
                 DnsRData::Aaaa(ip) => {
-                    let entry = host_ips.entry(dns_name_key(&rr.name)).or_insert_with(|| (Vec::new(), rr.ttl));
+                    let entry = host_ips
+                        .entry(dns_name_key(&rr.name))
+                        .or_insert_with(|| (Vec::new(), rr.ttl));
                     entry.0.push(IpAddr::V6(*ip));
                     entry.1 = entry.1.min(rr.ttl);
                 }
@@ -572,7 +597,9 @@ impl RawMdnsBackend {
         if !host_ips.is_empty() {
             let observed = state.observed.lock().unwrap();
             touched.extend(observed.iter().filter_map(|(fullname, observed)| {
-                host_ips.contains_key(&dns_name_key(&observed.meta.hostname)).then(|| fullname.clone())
+                host_ips
+                    .contains_key(&dns_name_key(&observed.meta.hostname))
+                    .then(|| fullname.clone())
             }));
         }
 
@@ -589,7 +616,11 @@ impl RawMdnsBackend {
                 .map(|v| v.0.clone())
                 .or_else(|| old.as_ref().map(|o| o.meta.hostname.clone()))
                 .unwrap_or_default();
-            let port = srv.get(&fullname).map(|v| v.1).or_else(|| old.as_ref().map(|o| o.meta.port)).unwrap_or(0);
+            let port = srv
+                .get(&fullname)
+                .map(|v| v.1)
+                .or_else(|| old.as_ref().map(|o| o.meta.port))
+                .unwrap_or(0);
 
             let txt_map = txt
                 .get(&fullname)
@@ -623,7 +654,10 @@ impl RawMdnsBackend {
                 hostname: hostname.clone(),
                 port,
                 ips: ips.clone(),
-                addrs: ips.iter().map(|ip| to_scoped_addr(*ip, port, state.announcer.ifindex())).collect(),
+                addrs: ips
+                    .iter()
+                    .map(|ip| to_scoped_addr(*ip, port, state.announcer.ifindex()))
+                    .collect(),
                 txt: txt_map,
                 service_type: service_type.clone(),
                 instance_name,
@@ -821,7 +855,9 @@ impl ParsedDnsMessage {
                         if i + len > rend {
                             break;
                         }
-                        let txt = std::str::from_utf8(&buf[i..i + len]).ok().unwrap_or_default();
+                        let txt = std::str::from_utf8(&buf[i..i + len])
+                            .ok()
+                            .unwrap_or_default();
                         if let Some(eq) = txt.find('=') {
                             map.insert(txt[..eq].to_string(), txt[eq + 1..].to_string());
                         }

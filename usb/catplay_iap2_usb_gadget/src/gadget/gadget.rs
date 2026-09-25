@@ -48,7 +48,9 @@ async fn retry_async<T: Send + 'static, E: Send + 'static, F: Fn() -> Result<T, 
     while ret.is_err() && tried < retries {
         tried += 1;
         let callback = callback.clone();
-        ret = spawn_blocking(move || callback.lock().unwrap()()).await.unwrap();
+        ret = spawn_blocking(move || callback.lock().unwrap()())
+            .await
+            .unwrap();
         tokio::time::sleep(interval).await;
     }
 
@@ -116,7 +118,9 @@ impl Gadget {
         .with_config(config)
         .with_os_descriptor(OsDescriptor::microsoft());
 
-        let gadget = g.register().map_err(|e| GadgetError::FailedGadgetRegister(e.into()))?;
+        let gadget = g
+            .register()
+            .map_err(|e| GadgetError::FailedGadgetRegister(e.into()))?;
 
         let handle = Self {
             gadget: Some(gadget),

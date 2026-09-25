@@ -42,7 +42,10 @@ impl NcmHelper {
     pub const LINK_LOCAL_IP_CAR_RAW: &str = "fe80::1234:5678:9abc:def1";
 
     pub fn release_from_network_manager(interface: &str) -> GadgetResult<()> {
-        let status = match Command::new("nmcli").args(["device", "set", interface, "managed", "no"]).status() {
+        let status = match Command::new("nmcli")
+            .args(["device", "set", interface, "managed", "no"])
+            .status()
+        {
             Ok(status) => status,
             Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
             Err(err) => return Err(err.into()),
@@ -60,17 +63,23 @@ impl NcmHelper {
     pub fn set_interface_ip(interface: &str, ip: &str) -> GadgetResult<()> {
         debug!("IP for {} is being set to {}", interface, ip);
 
-        let status = Command::new("/sbin/ip").args(["addr", "flush", "dev", interface]).status()?;
+        let status = Command::new("/sbin/ip")
+            .args(["addr", "flush", "dev", interface])
+            .status()?;
         if !status.success() {
             return Err(GadgetError::FailedIpLinkSetup("ip addr flush failed".into()));
         }
 
-        let status = Command::new("/sbin/ip").args(["addr", "replace", ip, "dev", interface]).status()?;
+        let status = Command::new("/sbin/ip")
+            .args(["addr", "replace", ip, "dev", interface])
+            .status()?;
         if !status.success() {
             return Err(GadgetError::FailedIpLinkSetup("ip addr replace failed".into()));
         }
 
-        let status = Command::new("/sbin/ip").args(["link", "set", interface, "up"]).status()?;
+        let status = Command::new("/sbin/ip")
+            .args(["link", "set", interface, "up"])
+            .status()?;
         if !status.success() {
             return Err(GadgetError::FailedIpLinkSetup("ip link set up failed".into()));
         }
@@ -81,7 +90,9 @@ impl NcmHelper {
     pub fn disable_interface(interface: &str) -> GadgetResult<()> {
         debug!("NCM interface {} is being disabled", interface);
 
-        let status = Command::new("/sbin/ip").args(["link", "set", interface, "down"]).status()?;
+        let status = Command::new("/sbin/ip")
+            .args(["link", "set", interface, "down"])
+            .status()?;
 
         if !status.success() {
             return Err(GadgetError::FailedIpLinkSetup("ip link set down failed".into()));
@@ -92,7 +103,10 @@ impl NcmHelper {
 
     pub fn set_ipv6_param(interface: &str, param_type: &str, param: &str, val: &str) -> GadgetResult<()> {
         if fs::metadata(Path::new("/proc/sys/net/ipv6").join(param_type))?.is_dir() {
-            let target = Path::new("/proc/sys/net/ipv6").join(param_type).join(interface).join(param);
+            let target = Path::new("/proc/sys/net/ipv6")
+                .join(param_type)
+                .join(interface)
+                .join(param);
             if target.exists() {
                 fs::write(target, val.as_bytes())?;
             } else {

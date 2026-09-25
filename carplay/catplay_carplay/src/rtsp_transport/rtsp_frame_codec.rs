@@ -113,7 +113,9 @@ impl RtspFrameCodec {
             return None;
         }
 
-        let res = src[search_start..end].windows(4).position(|w| w == b"\r\n\r\n");
+        let res = src[search_start..end]
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n");
         res.map(|x| x + 4 + search_start)
     }
 
@@ -155,7 +157,10 @@ impl RtspFrameCodec {
                 let pos = pos.unwrap();
 
                 let mut header_block = RtspString::from_bytes(src.split_to(pos))?;
-                let request_line_end = header_block.as_str().find("\r\n").ok_or(RtspError::ProtocolViolation("no request line"))?;
+                let request_line_end = header_block
+                    .as_str()
+                    .find("\r\n")
+                    .ok_or(RtspError::ProtocolViolation("no request line"))?;
                 if request_line_end > self.limits.request_line_size {
                     return Err(RtspError::HeadersTooBig);
                 }
@@ -174,7 +179,10 @@ impl RtspFrameCodec {
 
                 let mut headers = Vec::<(HttpHeader, RtspString)>::new();
                 while !header_block.is_empty() {
-                    let line_end = header_block.as_str().find("\r\n").ok_or(RtspError::ProtocolViolation("malformed header line"))?;
+                    let line_end = header_block
+                        .as_str()
+                        .find("\r\n")
+                        .ok_or(RtspError::ProtocolViolation("malformed header line"))?;
 
                     if line_end == 0 {
                         let crlf = header_block.split_to(2); // trailing CRLF
@@ -185,7 +193,9 @@ impl RtspFrameCodec {
                     }
 
                     let line_str = &header_block.as_str()[..line_end];
-                    let header_sep = line_str.find(": ").ok_or(RtspError::ProtocolViolation("header missing ': ' separator"))?;
+                    let header_sep = line_str
+                        .find(": ")
+                        .ok_or(RtspError::ProtocolViolation("header missing ': ' separator"))?;
                     let key =
                         HttpHeader::from_str(&line_str[..header_sep]).map_err(|_| RtspError::ProtocolViolation("invalid header name"))?;
 
@@ -228,7 +238,10 @@ impl RtspFrameCodec {
                 self.state = match is_response {
                     true => {
                         let proto = p0;
-                        let code = p1.as_str().parse::<u16>().map_err(|_| RtspError::ProtocolViolation("invalid http status code"))?;
+                        let code = p1
+                            .as_str()
+                            .parse::<u16>()
+                            .map_err(|_| RtspError::ProtocolViolation("invalid http status code"))?;
                         let status = HttpStatus::from_code(code);
                         ResponseBody {
                             proto,
@@ -239,7 +252,9 @@ impl RtspFrameCodec {
                         }
                     }
                     false => {
-                        let method = RtspMethod::from_str(p0.as_str()).ok().unwrap_or(RtspMethod::Unknown);
+                        let method = RtspMethod::from_str(p0.as_str())
+                            .ok()
+                            .unwrap_or(RtspMethod::Unknown);
                         let url = p1;
                         let proto = p2;
                         RequestBody {

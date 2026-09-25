@@ -49,7 +49,6 @@ impl DbusConnection {
     }
 }
 
-
 pub struct BluezManager {
     agent_conn: Option<DbusConnection>,
     agent_store: Option<BluezPinAgentStore>,
@@ -166,7 +165,9 @@ impl BluezManager {
         self.iap2_conn = None;
         self.iap2_registered.store(token, Ordering::Release);
 
-        let conn = DbusConnection::new_async().await.inspect_err(|_| self.unregister_iap2())?;
+        let conn = DbusConnection::new_async()
+            .await
+            .inspect_err(|_| self.unregister_iap2())?;
 
         let mut cr = Crossroads::new();
         register_iap_profile_interface(&mut cr, server_path, server_profile);
@@ -277,8 +278,9 @@ impl BluezManager {
         let device_path = format!("/org/bluez/{}/dev_{}", adapter, addr.replace(':', "_"));
         let proxy = Proxy::new("org.bluez", device_path, Duration::from_secs(10), conn.conn.clone());
 
-        let connect_profile: Result<(), dbus::Error> =
-            proxy.method_call("org.bluez.Device1", "ConnectProfile", (IAP_CLIENT_UUID.to_string(),)).await;
+        let connect_profile: Result<(), dbus::Error> = proxy
+            .method_call("org.bluez.Device1", "ConnectProfile", (IAP_CLIENT_UUID.to_string(),))
+            .await;
 
         connect_profile?;
 
@@ -299,7 +301,9 @@ impl BluezManager {
         let agent_path = "/org/bluez/Agent";
         self.agent_registred.store(token, Ordering::Release);
 
-        let conn = DbusConnection::new_async().await.inspect_err(|_| self.unregister_pin_agent())?;
+        let conn = DbusConnection::new_async()
+            .await
+            .inspect_err(|_| self.unregister_pin_agent())?;
 
         let mut cr = Crossroads::new();
         cr.set_async_support(Some((
@@ -336,8 +340,9 @@ impl BluezManager {
             .await;
         register_agent.inspect_err(|_| self.unregister_pin_agent())?;
 
-        let default_agent: Result<(), dbus::Error> =
-            proxy.method_call("org.bluez.AgentManager1", "RequestDefaultAgent", (agent_path_obj,)).await;
+        let default_agent: Result<(), dbus::Error> = proxy
+            .method_call("org.bluez.AgentManager1", "RequestDefaultAgent", (agent_path_obj,))
+            .await;
         default_agent.inspect_err(|_| self.unregister_pin_agent())?;
 
         self.agent_store = Some(agent_store);
@@ -357,7 +362,12 @@ impl BluezManager {
     pub async fn set_adapter_prop(&self, adapter: &str, key: &str, val: BluezValue) -> BluezResult<()> {
         let conn = Self::open_client_connection().await?;
 
-        let proxy = Proxy::new("org.bluez", "/org/bluez/".to_string() + adapter, Duration::from_secs(10), conn.conn.clone());
+        let proxy = Proxy::new(
+            "org.bluez",
+            "/org/bluez/".to_string() + adapter,
+            Duration::from_secs(10),
+            conn.conn.clone(),
+        );
 
         let set_prop: Result<(), dbus::Error> = proxy
             .method_call(
@@ -376,7 +386,12 @@ impl BluezManager {
     pub async fn get_adapter_prop(&self, adapter: &str, key: &str) -> BluezResult<BluezValue> {
         let conn = Self::open_client_connection().await?;
 
-        let proxy = Proxy::new("org.bluez", "/org/bluez/".to_string() + adapter, Duration::from_secs(10), conn.conn.clone());
+        let proxy = Proxy::new(
+            "org.bluez",
+            "/org/bluez/".to_string() + adapter,
+            Duration::from_secs(10),
+            conn.conn.clone(),
+        );
 
         let value: Result<(BluezValue,), dbus::Error> = proxy
             .method_call("org.freedesktop.DBus.Properties", "Get", ("org.bluez.Adapter1", key.to_string()))
@@ -389,26 +404,34 @@ impl BluezManager {
 
     pub async fn get_address(&self, adapter: &str) -> BluezResult<String> {
         let val = self.get_adapter_prop(adapter, "Address").await?;
-        let s = val.0.as_str().ok_or_else(|| BluezError::Value("Address is not a string".to_string()))?;
+        let s = val
+            .0
+            .as_str()
+            .ok_or_else(|| BluezError::Value("Address is not a string".to_string()))?;
 
         Ok(s.into())
     }
 
     pub async fn set_powered(&self, adapter: &str, powered: bool) -> BluezResult<()> {
-        self.set_adapter_prop(adapter, "Powered", Self::variant(powered)).await
+        self.set_adapter_prop(adapter, "Powered", Self::variant(powered))
+            .await
     }
 
     pub async fn set_pairable(&self, adapter: &str, pairable: bool) -> BluezResult<()> {
-        self.set_adapter_prop(adapter, "Pairable", Self::variant(pairable)).await
+        self.set_adapter_prop(adapter, "Pairable", Self::variant(pairable))
+            .await
     }
 
     pub async fn set_discoverable(&self, adapter: &str, discoverable: bool) -> BluezResult<()> {
-        self.set_adapter_prop(adapter, "Discoverable", Self::variant(discoverable)).await?;
-        self.set_adapter_prop(adapter, "DiscoverableTimeout", Self::variant(0u32)).await
+        self.set_adapter_prop(adapter, "Discoverable", Self::variant(discoverable))
+            .await?;
+        self.set_adapter_prop(adapter, "DiscoverableTimeout", Self::variant(0u32))
+            .await
     }
 
     pub async fn set_alias(&self, adapter: &str, alias: &str) -> BluezResult<()> {
-        self.set_adapter_prop(adapter, "Alias", Self::variant(alias.to_string())).await
+        self.set_adapter_prop(adapter, "Alias", Self::variant(alias.to_string()))
+            .await
     }
 
     pub async fn disconnect_peer(&self, adapter: &str, addr: MacAddr6) -> BluezResult<()> {
@@ -417,7 +440,9 @@ impl BluezManager {
         let device_path = format!("/org/bluez/{}/dev_{}", adapter, addr.to_string().replace(':', "_"));
         let proxy = Proxy::new("org.bluez", device_path, Duration::from_secs(10), conn.conn.clone());
 
-        let disconnect: Result<(), dbus::Error> = proxy.method_call("org.bluez.Device1", "Disconnect", ()).await;
+        let disconnect: Result<(), dbus::Error> = proxy
+            .method_call("org.bluez.Device1", "Disconnect", ())
+            .await;
 
         disconnect?;
 

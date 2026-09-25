@@ -249,7 +249,8 @@ impl ScreenFrameCodec {
                         decrypted_payload_len += decrypted_chunk_len;
                     }
 
-                    self.header.replace((header, decrypt_nonce, decrypted_payload_len));
+                    self.header
+                        .replace((header, decrypt_nonce, decrypted_payload_len));
                     return Ok(None);
                 }
 
@@ -545,8 +546,12 @@ mod tests {
         let mut server = ScreenFrameCodec::chacha(shared_secret, stream_connection_id, true);
         let mut client = ScreenFrameCodec::chacha(shared_secret, stream_connection_id, false);
 
-        let warmup_data: Vec<u8> = (0..WARMUP_FRAME_BODY_LEN).map(|i| ((i * 31) % 251) as u8).collect();
-        let data2: Vec<u8> = (0..SECOND_FRAME_BODY_LEN).map(|i| ((i * 17) % 251) as u8).collect();
+        let warmup_data: Vec<u8> = (0..WARMUP_FRAME_BODY_LEN)
+            .map(|i| ((i * 31) % 251) as u8)
+            .collect();
+        let data2: Vec<u8> = (0..SECOND_FRAME_BODY_LEN)
+            .map(|i| ((i * 17) % 251) as u8)
+            .collect();
 
         let make_frame = |data: &[u8]| {
             let mut bm = BytesMut::new();
@@ -569,7 +574,9 @@ mod tests {
         assert!(rx.capacity() >= WARMED_UP_CAPACITY);
 
         let mut encoded1 = BytesMut::new();
-        server.encode(make_frame(&warmup_data), &mut encoded1).unwrap();
+        server
+            .encode(make_frame(&warmup_data), &mut encoded1)
+            .unwrap();
 
         rx.extend_from_slice(&encoded1);
         let ret1 = client.decode(&mut rx).unwrap().unwrap();
@@ -703,10 +710,17 @@ mod tests {
         };
 
         let mut encoded = BytesMut::new();
-        server.encode(ScreenFrame::config(&config), &mut encoded).unwrap();
+        server
+            .encode(ScreenFrame::config(&config), &mut encoded)
+            .unwrap();
         let decoded_config_frame = client.decode(&mut encoded).unwrap().unwrap();
         assert_eq!(decoded_config_frame.header.opcode, ScreenOpCode::VideoConfig);
-        assert_eq!(decoded_config_frame.config_decode(config.video_latency).unwrap(), config);
+        assert_eq!(
+            decoded_config_frame
+                .config_decode(config.video_latency)
+                .unwrap(),
+            config
+        );
 
         let annexb = BytesMut::from(&[0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x21][..]);
         let pts = Instant::now();
@@ -718,7 +732,10 @@ mod tests {
         assert_eq!(decoded_video_frame.header.opcode, ScreenOpCode::VideoFrame);
         assert!(decoded_video_frame.chacha_tag_buf.is_empty());
 
-        let decoded_video = decoded_video_frame.video_decode(&config, &clock).unwrap().unwrap();
+        let decoded_video = decoded_video_frame
+            .video_decode(&config, &clock)
+            .unwrap()
+            .unwrap();
         assert_eq!(decoded_video.width, config.width);
         assert_eq!(decoded_video.height, config.height);
         assert_eq!(decoded_video.data, annexb);

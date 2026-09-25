@@ -68,7 +68,9 @@ impl AirPlayCipherCodec {
             data[chunk_start..payload_start].copy_from_slice(&aad);
 
             let nonce = HomeKitChaChaNonce(nonce_base + idx as u64);
-            let tag = self.write_cipher.encrypt(&mut data[payload_start..payload_start + len], &aad, nonce)?;
+            let tag = self
+                .write_cipher
+                .encrypt(&mut data[payload_start..payload_start + len], &aad, nonce)?;
             data[tag_start..tag_start + 16].copy_from_slice(tag.as_ref());
         }
         self.counter_tx.0 += chunks as u64;
@@ -124,7 +126,8 @@ impl AirPlayCipherCodec {
         debug_assert_eq!(packet_size, packet.len(), "invalid packet len");
 
         let nonce = self.counter_rx.advance()?;
-        self.read_cipher.decrypt(&mut packet[AIRPLAY_CIPHER_HEADER_LEN..], &aad, nonce)?;
+        self.read_cipher
+            .decrypt(&mut packet[AIRPLAY_CIPHER_HEADER_LEN..], &aad, nonce)?;
 
         packet.copy_within(AIRPLAY_CIPHER_HEADER_LEN..AIRPLAY_CIPHER_HEADER_LEN + len, 0);
         packet.truncate(len);

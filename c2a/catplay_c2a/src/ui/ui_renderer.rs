@@ -90,7 +90,8 @@ impl UiRenderer {
         let mut out = BytesMut::new();
         // Lazy-init encoder
         if self.h264.is_none() {
-            self.h264.replace(H264FrameBuffer::new(self.width, self.height, self.fps as _)?);
+            self.h264
+                .replace(H264FrameBuffer::new(self.width, self.height, self.fps as _)?);
         }
         let h264 = self.h264.as_mut().unwrap();
         h264.update_rgba(Canvas::as_rgba(self.fb.framebuffer()), &mut out)?;
@@ -301,17 +302,24 @@ fn test_waiting_for_connection_keyframe_cache_cycle() {
 
     setup_test_logger(true);
 
-    let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     let persist_dir = std::env::temp_dir().join(format!("catplay-ui-cache-test-{}-{unique}", std::process::id()));
     std::fs::create_dir(&persist_dir).unwrap();
 
     let mut renderer = UiRenderer::new(1920, 720, 60, 168.0, Some(persist_dir.clone())).unwrap();
-    renderer.render_and_encode_frame(UiState::WaitingForConnection, Duration::ZERO, false).unwrap();
+    renderer
+        .render_and_encode_frame(UiState::WaitingForConnection, Duration::ZERO, false)
+        .unwrap();
 
     let cache_file = persist_dir.join("catplay_welcome.h264");
     assert!(cache_file.exists());
 
-    renderer.render_and_encode_frame(UiState::WaitingForConnection, Duration::ZERO, false).unwrap();
+    renderer
+        .render_and_encode_frame(UiState::WaitingForConnection, Duration::ZERO, false)
+        .unwrap();
 
     let _ = std::fs::remove_file(cache_file);
     let _ = std::fs::remove_dir(persist_dir);

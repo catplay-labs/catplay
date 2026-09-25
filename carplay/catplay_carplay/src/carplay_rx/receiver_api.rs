@@ -116,19 +116,23 @@ pub trait AirPlayReceiverHandle: Send + Sync {
         take: ResourceConstraint,
         borrow: ResourceConstraint,
     ) -> RtspResult<AirPlayModeState> {
-        self.change_resource_mode(Resource::take(ResourceID::MainScreen, priority, take, borrow)).await
+        self.change_resource_mode(Resource::take(ResourceID::MainScreen, priority, take, borrow))
+            .await
     }
 
     async fn borrow_screen(&self, priority: ResourceTransferPriority, unborrow: ResourceConstraint) -> RtspResult<AirPlayModeState> {
-        self.change_resource_mode(Resource::borrow(ResourceID::MainScreen, priority, unborrow)).await
+        self.change_resource_mode(Resource::borrow(ResourceID::MainScreen, priority, unborrow))
+            .await
     }
 
     async fn untake_screen(&self) -> RtspResult<AirPlayModeState> {
-        self.change_resource_mode(Resource::untake(ResourceID::MainScreen)).await
+        self.change_resource_mode(Resource::untake(ResourceID::MainScreen))
+            .await
     }
 
     async fn unborrow_screen(&self) -> RtspResult<AirPlayModeState> {
-        self.change_resource_mode(Resource::unborrow(ResourceID::MainScreen)).await
+        self.change_resource_mode(Resource::unborrow(ResourceID::MainScreen))
+            .await
     }
 
     // Audio helpers
@@ -139,19 +143,23 @@ pub trait AirPlayReceiverHandle: Send + Sync {
         take: ResourceConstraint,
         borrow: ResourceConstraint,
     ) -> RtspResult<AirPlayModeState> {
-        self.change_resource_mode(Resource::take(ResourceID::MainAudio, priority, take, borrow)).await
+        self.change_resource_mode(Resource::take(ResourceID::MainAudio, priority, take, borrow))
+            .await
     }
 
     async fn borrow_audio(&self, priority: ResourceTransferPriority, unborrow: ResourceConstraint) -> RtspResult<AirPlayModeState> {
-        self.change_resource_mode(Resource::borrow(ResourceID::MainAudio, priority, unborrow)).await
+        self.change_resource_mode(Resource::borrow(ResourceID::MainAudio, priority, unborrow))
+            .await
     }
 
     async fn untake_audio(&self) -> RtspResult<AirPlayModeState> {
-        self.change_resource_mode(Resource::untake(ResourceID::MainAudio)).await
+        self.change_resource_mode(Resource::untake(ResourceID::MainAudio))
+            .await
     }
 
     async fn unborrow_audio(&self) -> RtspResult<AirPlayModeState> {
-        self.change_resource_mode(Resource::unborrow(ResourceID::MainAudio)).await
+        self.change_resource_mode(Resource::unborrow(ResourceID::MainAudio))
+            .await
     }
 
     fn is_car(&self) -> bool;

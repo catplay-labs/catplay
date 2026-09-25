@@ -103,7 +103,8 @@ impl MdnsBuilder {
         for j in 0..prefix_len {
             let offset = self.msg.len() as u16;
             let suffix = labels[j..].join(".") + ".";
-            self.comp.remember_suffix(&suffix, offset + Self::HEADER_SIZE);
+            self.comp
+                .remember_suffix(&suffix, offset + Self::HEADER_SIZE);
 
             let lb = labels[j].as_bytes();
             self.msg.push(lb.len() as u8);
@@ -246,7 +247,10 @@ impl MdnsCoder {
         b.rr_ptr(services_fqdn, ttl, service_type, false);
         b.rr_srv(&fullname, ttl, port, hostname, true);
 
-        let mut txt_entries: Vec<Vec<u8>> = txt.iter().map(|(k, v)| format!("{k}={v}").into_bytes()).collect();
+        let mut txt_entries: Vec<Vec<u8>> = txt
+            .iter()
+            .map(|(k, v)| format!("{k}={v}").into_bytes())
+            .collect();
         txt_entries.sort_unstable();
         let txt_refs = txt_entries.iter().map(|e| e.as_slice()).collect::<Vec<_>>();
         b.rr_txt(&fullname, ttl, &txt_refs, true);

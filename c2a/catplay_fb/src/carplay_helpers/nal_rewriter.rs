@@ -8,7 +8,9 @@ pub(crate) struct CarPlayNalRewriter;
 impl CarPlayNalRewriter {
     pub(crate) fn rewrite_sps(nal: &[u8]) -> RewriteResult<Vec<u8>> {
         let prefix_len = Self::annexb_prefix_len(nal)?;
-        let header = *nal.get(prefix_len).ok_or(H264FrameBufferError::X264BitstreamRewrite("missing SPS NAL header"))?;
+        let header = *nal
+            .get(prefix_len)
+            .ok_or(H264FrameBufferError::X264BitstreamRewrite("missing SPS NAL header"))?;
         if header & 0x1f != 7 {
             return Err(H264FrameBufferError::X264BitstreamRewrite("expected SPS NAL"));
         }
@@ -85,7 +87,9 @@ impl CarPlayNalRewriter {
 
     pub(crate) fn rewrite_idr(nal: &[u8]) -> RewriteResult<Vec<u8>> {
         let prefix_len = Self::annexb_prefix_len(nal)?;
-        let header = *nal.get(prefix_len).ok_or(H264FrameBufferError::X264BitstreamRewrite("missing IDR NAL header"))?;
+        let header = *nal
+            .get(prefix_len)
+            .ok_or(H264FrameBufferError::X264BitstreamRewrite("missing IDR NAL header"))?;
         if header & 0x1f != 5 || header >> 5 == 0 {
             return Err(H264FrameBufferError::X264BitstreamRewrite("expected reference IDR NAL"));
         }

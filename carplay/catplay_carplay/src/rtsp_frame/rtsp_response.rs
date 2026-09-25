@@ -44,7 +44,8 @@ impl RtspResponse {
     }
 
     pub fn del_header(&mut self, header: &HttpHeader) {
-        self.headers.retain_mut(|(_header, _value)| _header != header);
+        self.headers
+            .retain_mut(|(_header, _value)| _header != header);
     }
 
     pub fn get_header(&self, header: &HttpHeader) -> Option<&str> {

@@ -159,7 +159,9 @@ mod tests {
 
         let mut codec = RtpChaChaDecoder::new(key_bytes, scid, true);
 
-        let decrypted = codec.decode_rtp_payload(encoded).expect("decryption failed");
+        let decrypted = codec
+            .decode_rtp_payload(encoded)
+            .expect("decryption failed");
         assert_eq!(decrypted.payload(), original_payload);
         assert_eq!(decrypted.header(), &header);
     }

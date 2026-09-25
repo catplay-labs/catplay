@@ -472,8 +472,12 @@ fn generate_session_key(old_sap: &[u8], message_in: &[u8; 164]) -> [u8; 16] {
 }
 
 pub fn playfair_decrypt(message3: &[u8], input72: &[u8]) -> Result<[u8; 16], FairPlayError> {
-    let message3: &[u8; 164] = message3.try_into().map_err(|_| FairPlayError::UnsupportedSize(message3.len()))?;
-    let input72: &[u8; 72] = input72.try_into().map_err(|_| FairPlayError::UnsupportedSize(input72.len()))?;
+    let message3: &[u8; 164] = message3
+        .try_into()
+        .map_err(|_| FairPlayError::UnsupportedSize(message3.len()))?;
+    let input72: &[u8; 72] = input72
+        .try_into()
+        .map_err(|_| FairPlayError::UnsupportedSize(input72.len()))?;
 
     let sap_key = generate_session_key(&DEFAULT_SAP, message3);
     let mut block_in = [0u8; 16];
@@ -530,7 +534,9 @@ fn garble_rust(buffer0: &mut [u8; 20], buffer1: &mut [u8; 210], buffer2: &mut [u
         ((u32::from(buffer1[64]) & 92) | ((u32::from(buffer1[99]) / 3) & 35))
             & u32::from(buffer4[(rol8x(buffer4[usize::from(buffer1[206]) % 21], 4) as usize) % 21]),
     )) as u8;
-    buffer1[4] = ((u32::from(buffer1[99]) / 5).wrapping_mul(u32::from(buffer1[99]) / 5).wrapping_mul(2)) as u8;
+    buffer1[4] = ((u32::from(buffer1[99]) / 5)
+        .wrapping_mul(u32::from(buffer1[99]) / 5)
+        .wrapping_mul(2)) as u8;
     buffer2[34] = 0xb8;
     buffer1[153] ^= (u32::from(buffer2[usize::from(buffer1[203]) % 35])
         .wrapping_mul(u32::from(buffer2[usize::from(buffer1[203]) % 35]))
@@ -743,9 +749,17 @@ fn garble_rust(buffer0: &mut [u8; 20], buffer1: &mut [u8; 210], buffer2: &mut [u
         .wrapping_mul(u32::from(buffer4[usize::from(buffer1[26]) % 21]) >> 1);
     g = (f.wrapping_add(0x733ffff9))
         .wrapping_mul(198)
-        .wrapping_sub(((f.wrapping_add(0x733ffff9)).wrapping_mul(396).wrapping_add(212)) & 212)
+        .wrapping_sub(
+            ((f.wrapping_add(0x733ffff9))
+                .wrapping_mul(396)
+                .wrapping_add(212))
+                & 212,
+        )
         .wrapping_add(85);
-    buffer3[80] = (u32::from(buffer3[36]).wrapping_add(g ^ 148).wrapping_add((g ^ 107) << 1).wrapping_sub(127)) as u8;
+    buffer3[80] = (u32::from(buffer3[36])
+        .wrapping_add(g ^ 148)
+        .wrapping_add((g ^ 107) << 1)
+        .wrapping_sub(127)) as u8;
     buffer3[84] =
         ((u32::from(buffer2[usize::from(buffer3[64]) % 35]) & 245) | (u32::from(buffer2[usize::from(buffer3[20]) % 35]) & 10)) as u8;
     a = u32::from(buffer0[usize::from(buffer3[68]) % 20]) | 81;
@@ -999,7 +1013,9 @@ fn sap_buffers_from_block(block_in: &[u8; 64]) -> ([u8; 20], [u8; 210], [u8; 35]
         let y = buffer1[i.wrapping_sub(57) as usize % 210];
         let z = buffer1[i.wrapping_sub(13) as usize % 210];
         let w = buffer1[i as usize % 210];
-        buffer1[i as usize % 210] = rol8(y, 5).wrapping_add(rol8(z, 3) ^ w).wrapping_sub(rol8(x, 7));
+        buffer1[i as usize % 210] = rol8(y, 5)
+            .wrapping_add(rol8(z, 3) ^ w)
+            .wrapping_sub(rol8(x, 7));
     }
 
     (buffer0, buffer1, buffer2, buffer3, buffer4)

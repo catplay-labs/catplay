@@ -161,8 +161,13 @@ pub fn chunk_payload_bounds(src: &[u8], chunk: &NalChunk) -> Result<(usize, usiz
         return Err(NalError::Param);
     }
 
-    let payload_start = chunk.prefix_start.checked_add(chunk.prefix_len).ok_or(NalError::Param)?;
-    let payload_end = payload_start.checked_add(chunk.data_size).ok_or(NalError::Param)?;
+    let payload_start = chunk
+        .prefix_start
+        .checked_add(chunk.prefix_len)
+        .ok_or(NalError::Param)?;
+    let payload_end = payload_start
+        .checked_add(chunk.data_size)
+        .ok_or(NalError::Param)?;
 
     if payload_end > src.len() {
         return Err(NalError::Param);

@@ -5,7 +5,11 @@ mod tests {
     #[test]
     fn registry_should_not_be_empty_at_runtime() {
         let registry: &'static CsmPacketRegistry = CsmPacketRegistry::static_registry();
-        let ids: Vec<String> = registry.all_known_ids().iter().map(|x| format!("{:#04x}", *x)).collect();
+        let ids: Vec<String> = registry
+            .all_known_ids()
+            .iter()
+            .map(|x| format!("{:#04x}", *x))
+            .collect();
         assert!(!ids.is_empty());
         println!("Known IDs: {:?}", ids)
     }
@@ -52,11 +56,15 @@ mod tests {
 
         let bytes = registry.encode(&packet).expect("no packet encoded");
 
-        let decoded_packet = &registry.decode(auth_cert_packet).expect("no packet decoded");
+        let decoded_packet = &registry
+            .decode(auth_cert_packet)
+            .expect("no packet decoded");
 
         let decoded_packet_unpacked = AuthenticationCertificate::cast(decoded_packet).expect("no packet after downcast ref");
 
-        let reserialized = registry.encode(decoded_packet_unpacked).expect("no packet encoded #2");
+        let reserialized = registry
+            .encode(decoded_packet_unpacked)
+            .expect("no packet encoded #2");
 
         assert_eq!(auth_cert_packet, bytes);
         assert_eq!(auth_cert_packet, reserialized);

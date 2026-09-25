@@ -50,7 +50,8 @@ impl ResourceController {
         }
 
         this.screen.apply_initial_transaction(transaction.screen);
-        this.main_audio.apply_initial_transaction(transaction.main_audio);
+        this.main_audio
+            .apply_initial_transaction(transaction.main_audio);
 
         if let Some(phone_call) = transaction.phone_call {
             this.phone_call = phone_call;
@@ -72,7 +73,8 @@ impl ResourceController {
     }
 
     pub fn serialize_to_info_request(&self) -> ChangeModes {
-        self.serialize_to_info_transaction().serialize_to_info_change_modes()
+        self.serialize_to_info_transaction()
+            .serialize_to_info_change_modes()
     }
 
     pub fn serialize_to_transaction(&self) -> AirPlayModeTransaction {
@@ -221,9 +223,15 @@ impl ResourceManager {
 
     pub fn from_resource(resource: &Resource) -> Self {
         let state = ResourceState::from_request(resource.transfer_type);
-        let take_constraint = resource.take_constraint.unwrap_or(ResourceConstraint::Anytime);
-        let borrow_constraint = resource.borrow_constraint.unwrap_or(ResourceConstraint::Anytime);
-        let unborrow_constraint = resource.unborrow_constraint.unwrap_or(ResourceConstraint::Anytime);
+        let take_constraint = resource
+            .take_constraint
+            .unwrap_or(ResourceConstraint::Anytime);
+        let borrow_constraint = resource
+            .borrow_constraint
+            .unwrap_or(ResourceConstraint::Anytime);
+        let unborrow_constraint = resource
+            .unborrow_constraint
+            .unwrap_or(ResourceConstraint::Anytime);
 
         Self::new(state, take_constraint, borrow_constraint).with_unborrow_constraint(unborrow_constraint)
     }
@@ -458,7 +466,9 @@ impl ResourceManager {
             if !self.can_borrow(priority) {
                 return false;
             }
-            self.unborrow_constraint = resource.unborrow_constraint.unwrap_or(ResourceConstraint::Anytime);
+            self.unborrow_constraint = resource
+                .unborrow_constraint
+                .unwrap_or(ResourceConstraint::Anytime);
             self.state = actor_borrowed;
             self.borrows_count = 1;
             return true;

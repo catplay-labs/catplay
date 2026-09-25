@@ -152,7 +152,12 @@ impl CarPlayCtrlServer {
                 );
                 self.invite_status.pending.replace(car.1.clone());
                 self.invite_status.cache_miss = false;
-            } else if !car.1.entry.data.features.contains(AirPlayFeature::CARPLAY_CONTROL)
+            } else if !car
+                .1
+                .entry
+                .data
+                .features
+                .contains(AirPlayFeature::CARPLAY_CONTROL)
                 && !self.had_first_invite
                 && self.invite_status.pending.is_none()
             {

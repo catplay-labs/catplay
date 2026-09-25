@@ -13,7 +13,9 @@ use catplay_carplay_tx_gadget::client::{CarPlayUsbClientGadget, CarPlayUsbClient
 use catplay_hap::HomekitStorageRef;
 use catplay_iap2_usb::GadgetError;
 use catplay_mfi::MfiDeficeRef;
-use catplay_util::{AsyncShutdown, EventReconciler, EventSleeper, EventToken, Reconcilable, Reconciler, deadline_after, event_select, mpsc};
+use catplay_util::{
+    AsyncShutdown, EventReconciler, EventSleeper, EventToken, Reconcilable, Reconciler, deadline_after, event_select, mpsc,
+};
 use log::{debug, error, info};
 use tokio::sync::Mutex as TokioMutex;
 
@@ -269,49 +271,40 @@ impl Reconcilable for ProdGadget {
         }
 
         // TODO: this doesn't properly go back to `blocked` after transmit session is closed
-        rx.child_mut().set_invites_blocked(self.last_tx.lock().unwrap().is_none());
+        rx.child_mut()
+            .set_invites_blocked(self.last_tx.lock().unwrap().is_none());
 
         match _status {
-            ProdGadgetState::Initial => {
-                ProdGadgetState::WaitingForUdc.into()
-            }
-            ProdGadgetState::WaitingForUdc => {
-                ProdGadgetState::WaitingForUsbTransmitterGadget.into()
-            }
-            ProdGadgetState::WaitingForUsbTransmitterGadget => {
-                ProdGadgetState::WaitingForWirelessCarPlayGadget.into()
-            }
-            ProdGadgetState::WaitingForWirelessCarPlayGadget => {
-                ProdGadgetState::WaitingForCar.into()
-            }
-            ProdGadgetState::WaitingForCar => {
-                let car_state = match tx.state() {
-                    Ok(CarPlayUsbClientGadgetStatus::Transmitting | CarPlayUsbClientGadgetStatus::TransmitterReadyForPickup) => {
-                        self.car_wait_since = None;
-                        ProdGadgetState::WaitingForIPhone.into()
+            ProdGadgetState::Initial => ProdGadgetState::WaitingForUdc.into(),
+            ProdGadgetState::WaitingForUdc => ProdGadgetState::WaitingForUsbTransmitterGadget.into(),
+            ProdGadgetState::WaitingForUsbTransmitterGadget => ProdGadgetState::WaitingForWirelessCarPlayGadget.into(),
+            ProdGadgetState::WaitingForWirelessCarPlayGadget => ProdGadgetState::WaitingForCar.into(),
+            ProdGadgetState::WaitingForCar => match tx.state() {
+                Ok(CarPlayUsbClientGadgetStatus::Transmitting | CarPlayUsbClientGadgetStatus::TransmitterReadyForPickup) => {
+                    self.car_wait_since = None;
+                    ProdGadgetState::WaitingForIPhone.into()
+                }
+
+                _ if pending_transmitter.is_some() => {
+                    self.car_wait_since = None;
+                    ProdGadgetState::WaitingForIPhone.into()
+                }
+                _ => {
+                    let since = *self.car_wait_since.get_or_insert(update);
+                    if since.elapsed() >= Duration::from_secs(30)
+                        && self.last_hb.map_or(true, |t| t.elapsed() >= Duration::from_secs(30))
+                    {
+                        self.last_hb = Some(Instant::now());
+                        info!(
+                            "Still WaitingForCar after {}s: tx={:?} rx={:?}",
+                            since.elapsed().as_secs_f32(),
+                            tx.state(),
+                            rx.state()
+                        );
                     }
-                    _ if pending_transmitter.is_some() => {
-                        self.car_wait_since = None;
-                        ProdGadgetState::WaitingForIPhone.into()
-                    }
-                    _ => {
-                        let since = *self.car_wait_since.get_or_insert(update);
-                        if since.elapsed() >= Duration::from_secs(30)
-                            && self.last_hb.map_or(true, |t| t.elapsed() >= Duration::from_secs(30))
-                        {
-                            self.last_hb = Some(Instant::now());
-                            info!(
-                                "Still WaitingForCar after {}s: tx={:?} rx={:?}",
-                                since.elapsed().as_secs_f32(),
-                                tx.state(),
-                                rx.state()
-                            );
-                        }
-                        ProdGadgetState::WaitingForCar.into()
-                    }
-                };
-                car_state
-            }
+                    ProdGadgetState::WaitingForCar.into()
+                }
+            },
             ProdGadgetState::WaitingForIPhone => match rx.state() {
                 Ok(CarPlayWirelessGadgetState::Receiving) => ProdGadgetState::Running.into(),
                 _ => ProdGadgetState::WaitingForIPhone.into(),

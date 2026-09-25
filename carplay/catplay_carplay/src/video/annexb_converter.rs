@@ -49,14 +49,18 @@ impl AnnexBConverter {
     }
 
     fn convert_annexb_to_length_prefixed(&mut self, src: &mut BytesMut) -> Result<BytesMut, NalError> {
-        let chunks = self.annexb_chunks_iter(src).collect::<Result<Vec<_>, _>>()?;
+        let chunks = self
+            .annexb_chunks_iter(src)
+            .collect::<Result<Vec<_>, _>>()?;
         let (out, out_chunks) = AnnexBBuilder::rebuild_from_chunks(src, chunks, true, self.nal_size_len)?;
         self.offsets_cache = out_chunks;
         Ok(out)
     }
 
     fn convert_length_prefixed_to_annexb(&mut self, src: &mut BytesMut) -> Result<BytesMut, NalError> {
-        let chunks = self.length_prefixed_chunks_iter(src).collect::<Result<Vec<_>, _>>()?;
+        let chunks = self
+            .length_prefixed_chunks_iter(src)
+            .collect::<Result<Vec<_>, _>>()?;
         let (out, out_chunks) = AnnexBBuilder::rebuild_from_chunks(src, chunks, false, self.nal_size_len)?;
         self.offsets_cache = out_chunks;
         Ok(out)
@@ -105,11 +109,15 @@ mod tests {
     fn assert_roundtrip_with_cache_reuse(nal_size_len: usize) {
         let mut to_length = AnnexBConverter::new(nal_size_len);
         let annexb = sample_annexb();
-        let avcc = to_length.convert(&mut annexb.clone(), true).expect("annexb->avcc failed");
+        let avcc = to_length
+            .convert(&mut annexb.clone(), true)
+            .expect("annexb->avcc failed");
 
         let mut to_annexb = AnnexBConverter::with_cache(nal_size_len, to_length.offsets_cache.clone());
 
-        let annexb2 = to_annexb.convert(&mut avcc.clone(), false).expect("avcc->annexb failed");
+        let annexb2 = to_annexb
+            .convert(&mut avcc.clone(), false)
+            .expect("avcc->annexb failed");
         assert_eq!(annexb, annexb2);
     }
 
@@ -132,11 +140,15 @@ mod tests {
     fn conversion_without_cache_both_directions() {
         let annexb = sample_annexb();
         let mut to_avcc_no_cache = AnnexBConverter::new(4);
-        let avcc = to_avcc_no_cache.convert(&mut annexb.clone(), true).expect("annexb->avcc without cache failed");
+        let avcc = to_avcc_no_cache
+            .convert(&mut annexb.clone(), true)
+            .expect("annexb->avcc without cache failed");
         assert!(!to_avcc_no_cache.offsets_cache.is_empty());
 
         let mut to_annexb_no_cache = AnnexBConverter::new(4);
-        let annexb2 = to_annexb_no_cache.convert(&mut avcc.clone(), false).expect("avcc->annexb without cache failed");
+        let annexb2 = to_annexb_no_cache
+            .convert(&mut avcc.clone(), false)
+            .expect("avcc->annexb without cache failed");
         assert_eq!(annexb, annexb2);
         assert!(!to_annexb_no_cache.offsets_cache.is_empty());
     }
@@ -145,10 +157,14 @@ mod tests {
     fn avcc_to_annexb_without_cache_explicit() {
         let annexb = sample_annexb();
         let mut to_avcc = AnnexBConverter::new(4);
-        let avcc = to_avcc.convert(&mut annexb.clone(), true).expect("annexb->avcc failed");
+        let avcc = to_avcc
+            .convert(&mut annexb.clone(), true)
+            .expect("annexb->avcc failed");
 
         let mut fresh_decoder = AnnexBConverter::new(4);
-        let annexb2 = fresh_decoder.convert(&mut avcc.clone(), false).expect("avcc->annexb without cache failed");
+        let annexb2 = fresh_decoder
+            .convert(&mut avcc.clone(), false)
+            .expect("avcc->annexb without cache failed");
         assert_eq!(annexb, annexb2);
     }
 
@@ -156,7 +172,9 @@ mod tests {
     fn annexb_to_avcc_without_cache_explicit() {
         let annexb = sample_annexb();
         let mut fresh_encoder = AnnexBConverter::new(4);
-        let avcc = fresh_encoder.convert(&mut annexb.clone(), true).expect("annexb->avcc without cache failed");
+        let avcc = fresh_encoder
+            .convert(&mut annexb.clone(), true)
+            .expect("annexb->avcc without cache failed");
         assert!(!avcc.is_empty());
     }
 
@@ -164,9 +182,13 @@ mod tests {
     fn duplicate_conversion_with_cache_fails_verification_annexb() {
         let mut conv = AnnexBConverter::new(4);
         let annexb = sample_annexb();
-        let avcc = conv.convert(&mut annexb.clone(), true).expect("annexb->avcc failed");
+        let avcc = conv
+            .convert(&mut annexb.clone(), true)
+            .expect("annexb->avcc failed");
 
-        let mut annexb2 = conv.convert(&mut avcc.clone(), false).expect("avcc->annexb failed");
+        let mut annexb2 = conv
+            .convert(&mut avcc.clone(), false)
+            .expect("avcc->annexb failed");
         assert_eq!(annexb, annexb2);
         let err = conv.convert(&mut annexb2, false).unwrap_err();
         assert!(matches!(err, NalError::Param | NalError::Underrun));
@@ -176,8 +198,12 @@ mod tests {
     fn duplicate_conversion_with_cache_fails_verification_avcc() {
         let mut conv = AnnexBConverter::new(4);
         let annexb = sample_annexb();
-        let avcc = conv.convert(&mut annexb.clone(), true).expect("annexb->avcc failed");
-        let mut avcc2 = conv.convert(&mut annexb.clone(), true).expect("annexb->avcc (cached) failed");
+        let avcc = conv
+            .convert(&mut annexb.clone(), true)
+            .expect("annexb->avcc failed");
+        let mut avcc2 = conv
+            .convert(&mut annexb.clone(), true)
+            .expect("annexb->avcc (cached) failed");
         assert_eq!(avcc, avcc2);
         let err = conv.convert(&mut avcc2, true).unwrap_err();
         assert!(matches!(err, NalError::Param | NalError::Underrun));

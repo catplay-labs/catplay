@@ -176,7 +176,9 @@ impl ReclaimableVecBuilder {
 
     pub fn with_capacity(capacity: usize) -> Result<Self, ReclaimableVecError> {
         let data_offset = data_offset();
-        let wanted_len = data_offset.checked_add(capacity).ok_or(ReclaimableVecError::CapacityOverflow)?;
+        let wanted_len = data_offset
+            .checked_add(capacity)
+            .ok_or(ReclaimableVecError::CapacityOverflow)?;
         let page_size = page_size().ok_or_else(|| ReclaimableVecError::Mmap(io::Error::last_os_error()))?;
         let map_len = round_up(wanted_len.max(1), page_size).ok_or(ReclaimableVecError::CapacityOverflow)?;
 
@@ -266,7 +268,10 @@ impl ReclaimableVecBuilder {
     }
 
     pub fn extend_from_slice(&mut self, data: &[u8]) -> Result<(), ReclaimableVecError> {
-        let new_len = self.len.checked_add(data.len()).ok_or(ReclaimableVecError::CapacityOverflow)?;
+        let new_len = self
+            .len
+            .checked_add(data.len())
+            .ok_or(ReclaimableVecError::CapacityOverflow)?;
         if new_len > self.capacity {
             return Err(ReclaimableVecError::NotEnoughCapacity);
         }

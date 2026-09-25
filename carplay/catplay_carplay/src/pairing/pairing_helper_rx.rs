@@ -118,7 +118,10 @@ impl PairingHelperRx {
 
         self.pair_verify_session.take(); // Reset pair-verify if there is a state leftover
 
-        let session = self.pair_setup_session.take().unwrap_or_else(|| PairSetup::server(CARPLAY_MAGIC_PIN));
+        let session = self
+            .pair_setup_session
+            .take()
+            .unwrap_or_else(|| PairSetup::server(CARPLAY_MAGIC_PIN));
         resp.set_header(HttpHeader::ContentType, "application/pairing+tlv8");
 
         let payload = req.payload.clone();
@@ -162,7 +165,10 @@ impl PairingHelperRx {
             return Err(HttpStatus::NotAcceptable)?;
         }
 
-        let session = self.pair_verify_session.take().map_or_else(PairVerify::server, Ok);
+        let session = self
+            .pair_verify_session
+            .take()
+            .map_or_else(PairVerify::server, Ok);
 
         let Ok(session) = session else {
             return Err(HttpStatus::InternalServerError)?;

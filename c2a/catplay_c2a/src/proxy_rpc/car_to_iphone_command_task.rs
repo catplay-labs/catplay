@@ -84,12 +84,16 @@ impl Future for CarToIphoneCommandTask {
                     response.status
                 );
                 let response_for_car = response.clone();
-                this.cmd.as_mut().expect("command pending was already taken").respond(Ok(response_for_car));
+                this.cmd
+                    .as_mut()
+                    .expect("command pending was already taken")
+                    .respond(Ok(response_for_car));
                 Poll::Ready(this.take_output(Some(response)))
             }
             Poll::Ready(Err(err)) => {
                 error!("iPhone failed to respond to command {:?}: {err}", this.command);
-                this.phone.close(RtspError::UnexpectedState("Sanity violation: command timeout".into()));
+                this.phone
+                    .close(RtspError::UnexpectedState("Sanity violation: command timeout".into()));
                 Poll::Ready(this.take_output(None))
             }
         }

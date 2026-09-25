@@ -38,7 +38,8 @@ impl RtpAesCbcDecoder {
 
         let encrypted_len = payload.len() / 16 * 16;
         if encrypted_len > 0 {
-            self.cipher.decrypt_in_place(&mut payload[..encrypted_len])?;
+            self.cipher
+                .decrypt_in_place(&mut payload[..encrypted_len])?;
         }
 
         Ok(RtpPacketBorrow::new(header, payload))
@@ -70,7 +71,8 @@ impl RtpAesCbcDecoder {
         let payload = &mut output[RTP_HEADER_SIZE..total_len];
         let encrypted_len = payload.len() / 16 * 16;
         if encrypted_len > 0 {
-            self.cipher.encrypt_in_place(&mut payload[..encrypted_len])?;
+            self.cipher
+                .encrypt_in_place(&mut payload[..encrypted_len])?;
         }
 
         // "The remaining bytes are just copied unencrypted"
@@ -110,7 +112,9 @@ mod tests {
             .encode_rtp_payload_in_place(&mut buffer, original_payload.len(), &header)
             .expect("encryption failed");
 
-        let decrypted = cipher.decode_rtp_payload(encoded).expect("decryption failed");
+        let decrypted = cipher
+            .decode_rtp_payload(encoded)
+            .expect("decryption failed");
         assert_eq!(decrypted.payload(), &original_payload);
         assert_eq!(decrypted.header(), &header);
     }

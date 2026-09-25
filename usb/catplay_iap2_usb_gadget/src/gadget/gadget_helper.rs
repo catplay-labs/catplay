@@ -27,7 +27,9 @@ impl GadgetHelper {
             OtgRole::Host => "host",
             OtgRole::None => "none",
         };
-        let path = Path::new("/sys/class/usb_role").join(format!("{}-role-switch", udc)).join("role");
+        let path = Path::new("/sys/class/usb_role")
+            .join(format!("{}-role-switch", udc))
+            .join("role");
 
         debug!("Starting OTG role switch -> {role}");
         match path.exists() {
@@ -44,7 +46,9 @@ impl GadgetHelper {
     }
 
     pub fn get_usb_otg_role(udc: &str) -> io::Result<Option<Option<bool>>> {
-        let path = Path::new("/sys/class/usb_role").join(format!("{}-role-switch", udc)).join("role");
+        let path = Path::new("/sys/class/usb_role")
+            .join(format!("{}-role-switch", udc))
+            .join("role");
 
         match path.exists() {
             true => {

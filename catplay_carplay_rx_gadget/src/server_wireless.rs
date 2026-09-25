@@ -15,7 +15,9 @@ use catplay_hap::HomekitStorageRef;
 use catplay_iap2_bt::{BluetoothError, BluetoothManager};
 use catplay_iap2_usb::{GadgetError, NcmHelper};
 use catplay_mfi::MfiDeficeRef;
-use catplay_util::{AbortOnDropHandle, ArcBox, AsyncShutdown, EventSleeper, Reconcilable, Reconciler, deadline_after, event_select, sleep, spawn};
+use catplay_util::{
+    AbortOnDropHandle, ArcBox, AsyncShutdown, EventSleeper, Reconcilable, Reconciler, deadline_after, event_select, sleep, spawn,
+};
 use log::{debug, error, info, trace, warn};
 use macaddr::MacAddr6;
 
@@ -370,7 +372,9 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
 
                 let cb = move || CarPlayServerSession::new(mfi.clone(), identity.clone()).0;
                 let mut mgr = BluetoothManager::new(false, true, true, hci, cb);
-                mgr.start().await.map_err(|e| LocalError::Bluetooth(e.into()))?;
+                mgr.start()
+                    .await
+                    .map_err(|e| LocalError::Bluetooth(e.into()))?;
 
                 self.bluetooth.replace(mgr);
 
@@ -471,8 +475,13 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
                 );
 
                 self.last_mac.replace(*mac);
-                server.bind().await.map_err(|err| LocalError::AirPlayServer(err.into()))?;
-                server.start_advertise().map_err(|err| LocalError::Bonjour(err.into()))?;
+                server
+                    .bind()
+                    .await
+                    .map_err(|err| LocalError::AirPlayServer(err.into()))?;
+                server
+                    .start_advertise()
+                    .map_err(|err| LocalError::Bonjour(err.into()))?;
                 self.server.replace(server);
 
                 if let Some(last_bt_peer) = self.last_bt_peer {

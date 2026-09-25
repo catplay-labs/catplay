@@ -45,7 +45,11 @@ impl AirPlayRtspClient {
     pub async fn initial_setup(&self, req: InitialSetup) -> RtspResult<InitialSetupResponse> {
         let mut req = RtspRequest::with_plist(RtspMethod::Setup, "/setup", req)?;
         req.set_header(HttpHeader::UserAgent, AIRPLAY_TX_SDK_USER_AGENT);
-        let resp = self.rtsp.request_timeout(req, self.timeout).await?.ok_payload()?;
+        let resp = self
+            .rtsp
+            .request_timeout(req, self.timeout)
+            .await?
+            .ok_payload()?;
 
         Ok(resp)
     }
@@ -53,7 +57,11 @@ impl AirPlayRtspClient {
     pub async fn setup(&self, req: Setup) -> RtspResult<SetupResponse> {
         let mut req = RtspRequest::with_plist(RtspMethod::Setup, "/", req)?;
         req.set_header(HttpHeader::UserAgent, AIRPLAY_TX_SDK_USER_AGENT);
-        let resp = self.rtsp.request_timeout(req, self.timeout).await?.ok_payload()?;
+        let resp = self
+            .rtsp
+            .request_timeout(req, self.timeout)
+            .await?
+            .ok_payload()?;
 
         Ok(resp)
     }
@@ -61,7 +69,11 @@ impl AirPlayRtspClient {
     pub async fn info(&self) -> RtspResult<InfoMessageResponse> {
         let mut req = RtspRequest::with_plist(RtspMethod::Get, "/info", InfoMessage::default())?;
         req.set_header(HttpHeader::UserAgent, AIRPLAY_TX_SDK_USER_AGENT);
-        let resp = self.rtsp.request_timeout(req, Self::INFO_TIMEOUT).await?.ok_payload()?;
+        let resp = self
+            .rtsp
+            .request_timeout(req, Self::INFO_TIMEOUT)
+            .await?
+            .ok_payload()?;
 
         Ok(resp)
     }

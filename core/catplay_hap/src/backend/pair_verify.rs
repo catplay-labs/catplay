@@ -87,7 +87,11 @@ impl PairVerify {
 
     pub fn handle(self, homekit: &dyn HomekitStorage, body: &[u8]) -> Result<(Self, Vec<u8>), (tlv::Error, Vec<u8>)> {
         let decoded = tlv::decode(body);
-        let Some(_state) = decoded.get(&(Type::State as u8)).and_then(|d| d.first()).cloned() else {
+        let Some(_state) = decoded
+            .get(&(Type::State as u8))
+            .and_then(|d| d.first())
+            .cloned()
+        else {
             let err = tlv::ErrorContainer::new(StepNumber::Unknown as u8, tlv::Error::Unknown);
             return Err((tlv::Error::Unknown, err.encode()));
         };
@@ -132,7 +136,10 @@ impl PairVerify {
     ) -> Result<(PairVerify, tlv::Container), tlv::Error> {
         debug!("pair verify M1: received verify start request");
 
-        let a_pub_bytes = decoded.get(&(Type::PublicKey as u8)).and_then(|v| key32_from_vec(v)).ok_or(tlv::Error::Unknown)?;
+        let a_pub_bytes = decoded
+            .get(&(Type::PublicKey as u8))
+            .and_then(|v| key32_from_vec(v))
+            .ok_or(tlv::Error::Unknown)?;
         let a_pub = create_x25519_pubkey(&a_pub_bytes);
 
         let shared_secret = x25519_agree_ephermal(b, &a_pub).map_err(|_| tlv::Error::Authentication)?;
@@ -153,7 +160,9 @@ impl PairVerify {
         let nonce = Self::cipher_nonce(b"PV-Msg02");
         let mut cipher = HomeKitCipher::new(session_key);
 
-        let tag = cipher.encrypt(&mut encoded_sub_tlv, &[], nonce).map_err(|_| tlv::Error::Unknown)?;
+        let tag = cipher
+            .encrypt(&mut encoded_sub_tlv, &[], nonce)
+            .map_err(|_| tlv::Error::Unknown)?;
         encoded_sub_tlv.extend_from_slice(&tag);
 
         debug!("pair verify M2: sending verify start response");
@@ -185,20 +194,30 @@ impl PairVerify {
         mut decoded: TlvContainer,
     ) -> Result<(PairVerify, tlv::Container), tlv::Error> {
         debug!("pair verify M3: received verify finish request");
-        let mut data = decoded.remove(&(Type::EncryptedData as u8)).ok_or(tlv::Error::Unknown)?;
+        let mut data = decoded
+            .remove(&(Type::EncryptedData as u8))
+            .ok_or(tlv::Error::Unknown)?;
 
         let nonce = Self::cipher_nonce(b"PV-Msg03");
         let mut cipher = HomeKitCipher::new(session_key);
 
-        let decrypted = cipher.decrypt(&mut data, &[], nonce).map_err(|_| tlv::Error::Authentication)?;
+        let decrypted = cipher
+            .decrypt(&mut data, &[], nonce)
+            .map_err(|_| tlv::Error::Authentication)?;
 
         let sub_tlv = tlv::decode(decrypted);
 
-        let device_pairing_id = sub_tlv.get(&(Type::Identifier as u8)).ok_or(tlv::Error::Unknown)?;
-        let device_signature = sub_tlv.get(&(Type::Signature as u8)).ok_or(tlv::Error::Unknown)?;
+        let device_pairing_id = sub_tlv
+            .get(&(Type::Identifier as u8))
+            .ok_or(tlv::Error::Unknown)?;
+        let device_signature = sub_tlv
+            .get(&(Type::Signature as u8))
+            .ok_or(tlv::Error::Unknown)?;
 
         let pairing_uuid = Uuid::parse_str(str::from_utf8(device_pairing_id)?)?;
-        let pairing_public_key = homekit.find_paired_by_id(&pairing_uuid).ok_or(tlv::Error::Authentication)?; // don't remember this device
+        let pairing_public_key = homekit
+            .find_paired_by_id(&pairing_uuid)
+            .ok_or(tlv::Error::Authentication)?; // don't remember this device
 
         let device_info: Vec<u8> = [&a_pub[..], device_pairing_id, b_pub.as_ref()].concat();
 
@@ -230,9 +249,14 @@ impl PairVerify {
     ) -> Result<(PairVerify, tlv::Container), tlv::Error> {
         debug!("pair verify M2: received verify start response (controller)");
 
-        let b_pub_bytes = decoded.get(&(Type::PublicKey as u8)).and_then(|v| key32_from_vec(v)).ok_or(tlv::Error::Unknown)?;
+        let b_pub_bytes = decoded
+            .get(&(Type::PublicKey as u8))
+            .and_then(|v| key32_from_vec(v))
+            .ok_or(tlv::Error::Unknown)?;
         let b_pub = create_x25519_pubkey(&b_pub_bytes);
-        let mut encrypted = decoded.remove(&(Type::EncryptedData as u8)).ok_or(tlv::Error::Unknown)?;
+        let mut encrypted = decoded
+            .remove(&(Type::EncryptedData as u8))
+            .ok_or(tlv::Error::Unknown)?;
 
         let controller_id = homekit.device_id().to_string();
 
@@ -242,16 +266,24 @@ impl PairVerify {
         let nonce = Self::cipher_nonce(b"PV-Msg02");
         let mut cipher = HomeKitCipher::new(session_key);
 
-        let decrypted = cipher.decrypt(&mut encrypted, &[], nonce).map_err(|_| tlv::Error::Authentication)?;
+        let decrypted = cipher
+            .decrypt(&mut encrypted, &[], nonce)
+            .map_err(|_| tlv::Error::Authentication)?;
 
         let sub_tlv = tlv::decode(decrypted);
 
-        let accessory_id = sub_tlv.get(&(Type::Identifier as u8)).ok_or(tlv::Error::Unknown)?;
-        let accessory_signature = sub_tlv.get(&(Type::Signature as u8)).ok_or(tlv::Error::Unknown)?;
+        let accessory_id = sub_tlv
+            .get(&(Type::Identifier as u8))
+            .ok_or(tlv::Error::Unknown)?;
+        let accessory_signature = sub_tlv
+            .get(&(Type::Signature as u8))
+            .ok_or(tlv::Error::Unknown)?;
 
         let accessory_info = [b_pub.as_ref(), accessory_id, a_pub.as_ref()].concat();
         let accessory_uuid = Uuid::parse_str(str::from_utf8(accessory_id)?)?;
-        let accessory_pubkey = homekit.find_paired_by_id(&accessory_uuid).ok_or(tlv::Error::Authentication)?;
+        let accessory_pubkey = homekit
+            .find_paired_by_id(&accessory_uuid)
+            .ok_or(tlv::Error::Authentication)?;
 
         create_ed25519_pubkey(&accessory_pubkey)
             .verify(&accessory_info, accessory_signature)
@@ -267,7 +299,9 @@ impl PairVerify {
         .encode();
 
         let nonce = Self::cipher_nonce(b"PV-Msg03");
-        let tag = cipher.encrypt(&mut sub_tlv, &[], nonce).map_err(|_| tlv::Error::Unknown)?;
+        let tag = cipher
+            .encrypt(&mut sub_tlv, &[], nonce)
+            .map_err(|_| tlv::Error::Unknown)?;
         sub_tlv.extend_from_slice(&tag);
 
         debug!("pair verify M3: sending verify finish request");
@@ -314,24 +348,44 @@ mod tests {
         let hk_accessory = &*HomekitStorageFile::memory();
 
         let controller_id = hk_controller.device_id();
-        let controller_pub = hk_controller.device_ed25519_keypair().public_key().as_ref().to_vec();
-        hk_accessory.add_paired(controller_id, controller_pub.clone().try_into().unwrap()).unwrap();
+        let controller_pub = hk_controller
+            .device_ed25519_keypair()
+            .public_key()
+            .as_ref()
+            .to_vec();
+        hk_accessory
+            .add_paired(controller_id, controller_pub.clone().try_into().unwrap())
+            .unwrap();
 
         let accessory_id = hk_accessory.device_id();
-        let accessory_pub = hk_accessory.device_ed25519_keypair().public_key().as_ref().to_vec();
-        hk_controller.add_paired(accessory_id, accessory_pub.clone().try_into().unwrap()).unwrap();
+        let accessory_pub = hk_accessory
+            .device_ed25519_keypair()
+            .public_key()
+            .as_ref()
+            .to_vec();
+        hk_controller
+            .add_paired(accessory_id, accessory_pub.clone().try_into().unwrap())
+            .unwrap();
 
         let (controller, payload_m1) = PairVerify::client().unwrap();
         let accessory = PairVerify::server().unwrap();
 
         // --- M1: Controller -> Accessory ---
-        let (accessory, payload_m2) = accessory.handle(hk_accessory, &payload_m1).expect("accessory M1 failed");
+        let (accessory, payload_m2) = accessory
+            .handle(hk_accessory, &payload_m1)
+            .expect("accessory M1 failed");
         // --- M2: Accessory -> Controller ---
-        let (controller, payload_m3) = controller.handle(hk_controller, &payload_m2).expect("controller M2 failed");
+        let (controller, payload_m3) = controller
+            .handle(hk_controller, &payload_m2)
+            .expect("controller M2 failed");
         // --- M3: Controller -> Accessory ---
-        let (accessory, payload_m4) = accessory.handle(hk_accessory, &payload_m3).expect("accessory M3 failed");
+        let (accessory, payload_m4) = accessory
+            .handle(hk_accessory, &payload_m3)
+            .expect("accessory M3 failed");
         // --- M4: Accessory -> Controller ---
-        let (controller, _) = controller.handle(hk_controller, &payload_m4).expect("controller M4 failed");
+        let (controller, _) = controller
+            .handle(hk_controller, &payload_m4)
+            .expect("controller M4 failed");
 
         let controller_secret: [u8; 32];
 

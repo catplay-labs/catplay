@@ -169,7 +169,8 @@ impl<T: RtspReceiverCallback> TcpSession for RtspReceiver<T> {
             self.last_cseq.replace(cseq);
 
             self.payload_response_cache.clear();
-            self.payload_response_cache.reserve(Self::RESPONSE_PAYLOAD_CACHE_MAX);
+            self.payload_response_cache
+                .reserve(Self::RESPONSE_PAYLOAD_CACHE_MAX);
             let payload_cache = self.payload_response_cache.split_off(0);
 
             let mut response = RtspResponse::new(req.cseq, HttpStatus::Ok);
@@ -208,7 +209,8 @@ impl<T: RtspReceiverCallback> TcpSession for RtspReceiver<T> {
 
             if let Some(key) = resp.encrypt_after_response {
                 debug!("Encrypting connection now");
-                sink.codec_mut().encrypt(AirPlayCipherSaltType::Control, key);
+                sink.codec_mut()
+                    .encrypt(AirPlayCipherSaltType::Control, key);
             }
 
             if resp.disconnect_after_response {
@@ -221,20 +223,26 @@ impl<T: RtspReceiverCallback> TcpSession for RtspReceiver<T> {
 
     async fn on_eof(&mut self, status: Option<RtspError>) {
         warn!("Observed EOF on receiver: {status:?}");
-        self.callback.on_event(RtspReceiverEvent::Eof(status.unwrap_or(RtspError::Closed))).await;
+        self.callback
+            .on_event(RtspReceiverEvent::Eof(status.unwrap_or(RtspError::Closed)))
+            .await;
     }
 
     async fn on_peer_addr(&mut self, peer_addr: SocketAddr) -> Result<(), Self::Error> {
         debug!("peer_addr = {peer_addr}");
         self.peer_addr.replace(peer_addr);
-        self.callback.on_event(RtspReceiverEvent::SetPeerIp(peer_addr)).await;
+        self.callback
+            .on_event(RtspReceiverEvent::SetPeerIp(peer_addr))
+            .await;
         Ok(())
     }
 
     async fn on_local_addr(&mut self, local_addr: SocketAddr) -> Result<(), Self::Error> {
         debug!("local_addr = {local_addr}");
         self.local_addr.replace(local_addr);
-        self.callback.on_event(RtspReceiverEvent::SetBindIp(local_addr)).await;
+        self.callback
+            .on_event(RtspReceiverEvent::SetBindIp(local_addr))
+            .await;
         Ok(())
     }
 

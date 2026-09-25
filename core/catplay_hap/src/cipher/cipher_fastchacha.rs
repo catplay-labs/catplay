@@ -313,7 +313,9 @@ mod tests {
         let short_len = short.len();
 
         let mut dec = HomeKitCipherFast::new(key);
-        let ret = dec.decrypt_progressive(&mut short, aad, nonce, 0, short_len, 16).unwrap();
+        let ret = dec
+            .decrypt_progressive(&mut short, aad, nonce, 0, short_len, 16)
+            .unwrap();
 
         assert!(ret.is_empty());
         assert_eq!(&short, b"tiny-chunk");
@@ -327,7 +329,9 @@ mod tests {
         let mut buf = [0u8; 32];
 
         let mut dec = HomeKitCipherFast::new(key);
-        let err = dec.decrypt_progressive(&mut buf, aad, nonce, 0, 17, 16).unwrap_err();
+        let err = dec
+            .decrypt_progressive(&mut buf, aad, nonce, 0, 17, 16)
+            .unwrap_err();
 
         assert!(matches!(err, HomeKitCipherError::UnexpectedDecryptedLength));
     }
@@ -351,9 +355,13 @@ mod tests {
         let cut2 = 31usize;
         let full_len = frame.len();
 
-        dec.decrypt_progressive(&mut frame, aad, nonce, 0, cut1, full_len).unwrap();
-        dec.decrypt_progressive(&mut frame, aad, nonce, cut1, cut2, full_len).unwrap();
-        let decrypted_last = dec.decrypt_progressive(&mut frame, aad, nonce, cut2, full_len, full_len).unwrap();
+        dec.decrypt_progressive(&mut frame, aad, nonce, 0, cut1, full_len)
+            .unwrap();
+        dec.decrypt_progressive(&mut frame, aad, nonce, cut1, cut2, full_len)
+            .unwrap();
+        let decrypted_last = dec
+            .decrypt_progressive(&mut frame, aad, nonce, cut2, full_len, full_len)
+            .unwrap();
 
         assert_eq!(decrypted_last, &plaintext[cut2..]);
         assert_eq!(&frame[..plaintext.len()], plaintext.as_slice());
@@ -365,7 +373,9 @@ mod tests {
         let aad = b"aad-boundary";
         let nonce = HomeKitChaChaNonce(11);
 
-        let plaintext: Vec<u8> = (0..160).map(|i| (i as u8).wrapping_mul(7).wrapping_add(3)).collect();
+        let plaintext: Vec<u8> = (0..160)
+            .map(|i| (i as u8).wrapping_mul(7).wrapping_add(3))
+            .collect();
 
         let mut enc = HomeKitCipherFast::new(key);
         let mut ciphertext = plaintext.clone();
@@ -379,10 +389,13 @@ mod tests {
         let cuts = [5usize, 37usize, 73usize, 109usize, 143usize];
         let mut prev = 0usize;
         for &cut in &cuts {
-            dec.decrypt_progressive(&mut frame, aad, nonce, prev, cut, full_len).unwrap();
+            dec.decrypt_progressive(&mut frame, aad, nonce, prev, cut, full_len)
+                .unwrap();
             prev = cut;
         }
-        let last = dec.decrypt_progressive(&mut frame, aad, nonce, prev, full_len, full_len).unwrap();
+        let last = dec
+            .decrypt_progressive(&mut frame, aad, nonce, prev, full_len, full_len)
+            .unwrap();
 
         assert_eq!(last, &plaintext[prev..]);
         assert_eq!(&frame[..plaintext.len()], plaintext.as_slice());

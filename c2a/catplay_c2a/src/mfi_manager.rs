@@ -55,7 +55,9 @@ impl MfiManager {
             info!("Starting MFI server on {}", mfi_server.bind.clone());
 
             let mut server = MfiDeviceServer::new(mfi_server.bind.clone(), mfi.clone());
-            server.bind().map_err(|err| format!("failed to bind mfi server: {}", err))?;
+            server
+                .bind()
+                .map_err(|err| format!("failed to bind mfi server: {}", err))?;
             spawn(move || server.listen());
             info!("MFI server is now running in background")
         }

@@ -58,11 +58,15 @@ impl AlacDecoder {
         }
 
         if !self.needs_i32_scratch {
-            let decoded = self.alac.decode_packet(data, &mut output[..self.max_samples_per_packet])?;
+            let decoded = self
+                .alac
+                .decode_packet(data, &mut output[..self.max_samples_per_packet])?;
             return Ok(decoded.len());
         }
 
-        let decoded = self.alac.decode_packet(data, &mut self.scratch_i32[..self.max_samples_per_packet])?;
+        let decoded = self
+            .alac
+            .decode_packet(data, &mut self.scratch_i32[..self.max_samples_per_packet])?;
         for (dst, &src) in output.iter_mut().zip(decoded.iter()) {
             let v = (src >> 8).clamp(i16::MIN as i32, i16::MAX as i32);
             *dst = v as i16;

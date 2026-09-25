@@ -66,7 +66,9 @@ fn bench_fast_chacha20_compare(c: &mut Criterion) {
 }
 
 fn make_plaintext() -> Vec<u8> {
-    (0..DATA_LEN).map(|i| (i as u8).wrapping_mul(37).wrapping_add(11)).collect()
+    (0..DATA_LEN)
+        .map(|i| (i as u8).wrapping_mul(37).wrapping_add(11))
+        .collect()
 }
 
 fn encrypt_rustcrypto(key: &[u8; 32], nonce: &[u8; 12], plain: &[u8]) -> Vec<u8> {

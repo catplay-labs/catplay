@@ -15,10 +15,14 @@ fn main() {
     let mut fast_cipher = HomeKitCipherFast::new(key);
 
     let mut ring_data = plaintext.clone();
-    let ring_tag = ring_cipher.encrypt(&mut ring_data, aad, HomeKitChaChaNonce(nonce.0)).unwrap();
+    let ring_tag = ring_cipher
+        .encrypt(&mut ring_data, aad, HomeKitChaChaNonce(nonce.0))
+        .unwrap();
 
     let mut fast_data = plaintext.clone();
-    let fast_tag = fast_cipher.encrypt(&mut fast_data, aad, HomeKitChaChaNonce(nonce.0)).unwrap();
+    let fast_tag = fast_cipher
+        .encrypt(&mut fast_data, aad, HomeKitChaChaNonce(nonce.0))
+        .unwrap();
 
     assert_eq!(fast_data, ring_data);
     assert_eq!(fast_tag, ring_tag);
@@ -34,7 +38,9 @@ fn main() {
 
     let mut fast_combined = fast_data.clone();
     fast_combined.extend_from_slice(&fast_tag);
-    let decrypted = fast_cipher.decrypt(&mut fast_combined, aad, HomeKitChaChaNonce(nonce.0)).unwrap();
+    let decrypted = fast_cipher
+        .decrypt(&mut fast_combined, aad, HomeKitChaChaNonce(nonce.0))
+        .unwrap();
     assert_eq!(decrypted, plaintext.as_slice());
     println!("Cipher OK");
 

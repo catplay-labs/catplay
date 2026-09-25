@@ -63,22 +63,14 @@ fn write_transaction(file: &File, dev_addr: u8, data: &[u8]) -> io::Result<()> {
     transfer(file.as_raw_fd(), std::slice::from_mut(&mut message))
 }
 
-fn write_read_transaction(file: &File, dev_addr: u8, write: &[u8], read: &mut [u8]) -> io::Result<()> {
-    let mut messages = [
-        I2cMessage {
-            addr: u16::from(dev_addr),
-            flags: 0,
-            len: checked_i2c_len(write.len())?,
-            buf: write.as_ptr().cast_mut(),
-        },
-        I2cMessage {
-            addr: u16::from(dev_addr),
-            flags: I2C_M_RD,
-            len: checked_i2c_len(read.len())?,
-            buf: read.as_mut_ptr(),
-        },
-    ];
-    transfer(file.as_raw_fd(), &mut messages)
+fn read_transaction(file: &File, dev_addr: u8, read: &mut [u8]) -> io::Result<()> {
+    let mut message = I2cMessage {
+        addr: u16::from(dev_addr),
+        flags: I2C_M_RD,
+        len: checked_i2c_len(read.len())?,
+        buf: read.as_mut_ptr(),
+    };
+    transfer(file.as_raw_fd(), std::slice::from_mut(&mut message))
 }
 
 fn read_i2c(i2c: &mut File, dev_addr: u8, addr: u8, n: usize) -> MfiResult<Vec<u8>> {
@@ -88,16 +80,38 @@ fn read_i2c(i2c: &mut File, dev_addr: u8, addr: u8, n: usize) -> MfiResult<Vec<u
 
     debug!("read_i2c 0x{addr:02X} n={n}");
 
+    /* Select the register once. If the following read NACKs because the
+     * coprocessor is not ready yet, retry only the read. */
     loop {
         tries += 1;
-        match write_read_transaction(i2c, dev_addr, &[addr], &mut buf) {
+        match write_transaction(i2c, dev_addr, &[addr]) {
+            Ok(_) => break,
+            Err(e) => {
+                if Instant::now() >= deadline {
+                    debug!("read_i2c 0x{addr:02X} failed with deadline after {tries} tries");
+                    return Err(MfiI2cError::ReadTimeout {
+                        reg: addr,
+                        n,
+                        tries,
+                        status: e,
+                    });
+                }
+                sleep(Duration::from_micros(RETRY_DELAY_US));
+            }
+        }
+    }
+
+    tries = 0;
+    loop {
+        tries += 1;
+        match read_transaction(i2c, dev_addr, &mut buf) {
             Ok(_) => {
-                debug!("read_i2c 0x{addr:02X} OK after {tries} tries");
+                debug!("read_i2c 0x{addr:02X} OK after {tries} read tries");
                 return Ok(buf);
             }
             Err(e) => {
                 if Instant::now() >= deadline {
-                    debug!("read_i2c 0x{addr:02X} failed with deadline after {tries} tries");
+                    debug!("read_i2c 0x{addr:02X} failed with deadline after {tries} read tries");
                     return Err(MfiI2cError::ReadTimeout {
                         reg: addr,
                         n,
@@ -151,7 +165,10 @@ pub struct MfiDeviceI2C {
 
 impl MfiDeviceI2C {
     pub fn new(bus_offset: u32, dev_addr: u8) -> MfiResult<Self> {
-        let i2c_device = OpenOptions::new().read(true).write(true).open(format!("/dev/i2c-{bus_offset}"))?;
+        let i2c_device = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(format!("/dev/i2c-{bus_offset}"))?;
         let s = Self {
             device: Mutex::new(i2c_device),
             // bus_offset,

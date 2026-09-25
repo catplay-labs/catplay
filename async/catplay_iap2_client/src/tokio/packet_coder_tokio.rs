@@ -18,7 +18,9 @@ impl Decoder for PacketCoderTokio {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<PacketOrDetect>, io::Error> {
-        self.coder.decode(src).map_err(|e| io::Error::other(format!("{:?}", e)))
+        self.coder
+            .decode(src)
+            .map_err(|e| io::Error::other(format!("{:?}", e)))
     }
 }
 
@@ -26,6 +28,8 @@ impl Encoder<PacketOrDetect> for PacketCoderTokio {
     type Error = io::Error;
 
     fn encode(&mut self, item: PacketOrDetect, dst: &mut BytesMut) -> Result<(), io::Error> {
-        self.coder.encode(item, dst).map_err(|e| io::Error::other(format!("{:?}", e)))
+        self.coder
+            .encode(item, dst)
+            .map_err(|e| io::Error::other(format!("{:?}", e)))
     }
 }

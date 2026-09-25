@@ -49,6 +49,7 @@ impl UdcHelper {
     }
 
     fn path_file_name(path: PathBuf) -> Option<String> {
-        path.file_name().map(|name| name.to_string_lossy().into_owned())
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
     }
 }

@@ -273,15 +273,23 @@ impl<T: AsRawFd> AsyncIo<T> {
     }
 
     pub fn get_ref(&self) -> &T {
-        self.inner.as_ref().expect("async I/O backend is missing").get_ref()
+        self.inner
+            .as_ref()
+            .expect("async I/O backend is missing")
+            .get_ref()
     }
 
     pub fn get_mut(&mut self) -> &mut T {
-        self.inner.as_mut().expect("async I/O backend is missing").get_mut()
+        self.inner
+            .as_mut()
+            .expect("async I/O backend is missing")
+            .get_mut()
     }
 
     pub fn into_inner(self) -> T {
-        self.inner.expect("async I/O backend is missing").into_inner()
+        self.inner
+            .expect("async I/O backend is missing")
+            .into_inner()
     }
 
     pub fn set_interest(&mut self, interest: Interest) -> io::Result<()> {
@@ -351,8 +359,15 @@ impl<T: AsRawFd> AsyncIo<T> {
     }
 
     pub fn try_io<R>(&mut self, interest: Interest, f: impl FnOnce(&mut T) -> io::Result<R>) -> io::Result<R> {
-        let result = self.inner.as_mut().expect("async I/O backend is missing").try_io_mut(interest.to_tokio()?, f);
-        if result.as_ref().is_err_and(|err| err.kind() == io::ErrorKind::WouldBlock) {
+        let result = self
+            .inner
+            .as_mut()
+            .expect("async I/O backend is missing")
+            .try_io_mut(interest.to_tokio()?, f);
+        if result
+            .as_ref()
+            .is_err_and(|err| err.kind() == io::ErrorKind::WouldBlock)
+        {
             self.pending_ready = self.pending_ready - interest.ready_mask();
         }
         result
@@ -400,7 +415,10 @@ impl SysfsNotify {
     }
 
     pub fn open_with_token(path: impl AsRef<Path>, token: EventToken) -> io::Result<Self> {
-        let file = OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC).open(path)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(path)?;
 
         let mut notify = Self {
             inner: AsyncIo::new(file, Interest::PRIORITY | Interest::ERROR)?.with_token(token),

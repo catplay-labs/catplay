@@ -33,8 +33,7 @@ impl KeepAliveClient {
         rand::fill(&mut buf);
 
         match sink.send(&buf) {
-            Ok(_) => {
-            }
+            Ok(_) => {}
             Err(err) => {
                 debug!("Failed to send keep alive ping: {err:?}");
             }

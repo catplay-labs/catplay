@@ -22,7 +22,6 @@ pub struct AirPlayBonjourEntry {
     pub deviceid: String,
 
     // Non-CarPlay additions
-    
     /// Vodka Version(FairPlay); valid value is 2
     pub vv: String,
     /// pw=false means no password required for pairing
@@ -54,7 +53,9 @@ fn airplay_flags_bonjour(flags: AirPlayStatus) -> String {
 }
 
 fn parse_airplay_flags_bonjour(s: &str) -> Option<AirPlayStatus> {
-    u8::from_str_radix(s.trim_start_matches("0x"), 16).map(AirPlayStatus::from_bits_retain).ok()
+    u8::from_str_radix(s.trim_start_matches("0x"), 16)
+        .map(AirPlayStatus::from_bits_retain)
+        .ok()
 }
 
 impl BonjourEntryType for AirPlayBonjourEntry {

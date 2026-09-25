@@ -51,7 +51,9 @@ where
     R::Item: Send,
 {
     async fn sleep(&mut self) -> Option<EventToken> {
-        filling_slot(&mut self.cached, self.inner.next()).sleep().await
+        filling_slot(&mut self.cached, self.inner.next())
+            .sleep()
+            .await
     }
 }
 

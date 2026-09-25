@@ -76,7 +76,9 @@ impl HomekitStorage for HomekitStorageFile {
             let file = File::create(file_path.clone()).inspect_err(|err| debug!("Failed File::create {file_path}: {err:?}"))?;
             let mut writer = BufWriter::new(file);
             let data = postcard::to_stdvec(self).map_err(|e| io::Error::other(format!("{}", e)))?;
-            writer.write_all(&data).inspect_err(|err| debug!("Failed File::write_all {file_path}: {err:?}"))?;
+            writer
+                .write_all(&data)
+                .inspect_err(|err| debug!("Failed File::write_all {file_path}: {err:?}"))?;
         }
 
         Ok(())
@@ -87,7 +89,10 @@ fn random_identity() -> (Uuid, Vec<u8>) {
     let rng = SystemRandom::new();
 
     let uuid = Uuid::new_v4();
-    let keypair_pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).expect("failed to generate keypair").as_ref().to_vec();
+    let keypair_pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng)
+        .expect("failed to generate keypair")
+        .as_ref()
+        .to_vec();
 
     (uuid, keypair_pkcs8)
 }

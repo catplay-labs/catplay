@@ -166,7 +166,9 @@ mod tests {
         let packet = Packet::new_ack(ModSeq(7), ModSeq(6), 2, Some(Vec::new()));
 
         let mut encoded = BytesMut::with_capacity(16);
-        coder.encode(PacketOrDetect::Packet(packet.clone()), &mut encoded).expect("encode failed");
+        coder
+            .encode(PacketOrDetect::Packet(packet.clone()), &mut encoded)
+            .expect("encode failed");
         assert_eq!(&encoded[..], &[0xFF, 0x5A, 0x00, 0x0A, 0x40, 0x07, 0x06, 0x02, 0x4E, 0x00]);
 
         let decoded = coder.decode(&mut encoded).expect("decode failed");
@@ -187,7 +189,9 @@ mod tests {
         let packet = Packet::new_ack(ModSeq(7), ModSeq(6), 2, None);
 
         let mut encoded = BytesMut::with_capacity(16);
-        coder.encode(PacketOrDetect::Packet(packet.clone()), &mut encoded).expect("encode failed");
+        coder
+            .encode(PacketOrDetect::Packet(packet.clone()), &mut encoded)
+            .expect("encode failed");
         assert_eq!(&encoded[..], &[0xFF, 0x5A, 0x00, 0x09, 0x40, 0x07, 0x06, 0x02, 0x4F]);
 
         let decoded = coder.decode(&mut encoded).expect("decode failed");
@@ -240,7 +244,9 @@ mod tests {
 
         // Reserialize
         let mut dst = BytesMut::with_capacity(1024);
-        decoder.encode(PacketOrDetect::Packet(packet.clone()), &mut dst).expect("encode failed");
+        decoder
+            .encode(PacketOrDetect::Packet(packet.clone()), &mut dst)
+            .expect("encode failed");
 
         let decoded_again = decoder.decode(&mut dst).expect("decode failed");
         assert!(decoded_again.is_some(), "Packet was not decoded");

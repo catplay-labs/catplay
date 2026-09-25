@@ -292,7 +292,10 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(index, &(start, prefix_len))| {
-                let end = starts.get(index + 1).map(|&(next_start, _)| next_start).unwrap_or(data.len());
+                let end = starts
+                    .get(index + 1)
+                    .map(|&(next_start, _)| next_start)
+                    .unwrap_or(data.len());
                 (&data[start..end], prefix_len)
             })
             .collect()
@@ -312,11 +315,14 @@ mod tests {
         for &((width, height, fps), level) in &CARPLAY_LEVELS {
             let mut encoder = X264FrameBuffer::new(width, height, fps).expect("failed to create x264 encoder");
             let mut headers = BytesMut::new();
-            encoder.get_headers(&mut headers).expect("failed to generate SPS/PPS");
+            encoder
+                .get_headers(&mut headers)
+                .expect("failed to generate SPS/PPS");
 
             let nals = annexb_nals(&headers);
             assert!(
-                nals.iter().all(|(nal, prefix_len)| nal.get(*prefix_len).is_none_or(|byte| byte & 0x1f != 6)),
+                nals.iter()
+                    .all(|(nal, prefix_len)| nal.get(*prefix_len).is_none_or(|byte| byte & 0x1f != 6)),
                 "SEI leaked from x264 for {width}x{height}@{fps}"
             );
             let sps = nals

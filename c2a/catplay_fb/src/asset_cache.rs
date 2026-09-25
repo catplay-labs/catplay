@@ -94,7 +94,10 @@ impl AssetCache {
         let key = (id.clone(), w, h);
 
         if !self.img_scaled.contains_key(&key) {
-            let orig = self.img_originals.get_mut(&id).ok_or_else(|| AssetCacheError::AssetNotFound(id.clone()))?;
+            let orig = self
+                .img_originals
+                .get_mut(&id)
+                .ok_or_else(|| AssetCacheError::AssetNotFound(id.clone()))?;
             let scaled = orig.resized(w, h);
             self.img_scaled.insert(key.clone(), scaled);
         }
@@ -114,7 +117,11 @@ impl AssetCache {
     }
 
     pub fn load_font_scale(&mut self, id: String, scale: u32) -> Result<&mut FontRenderer, AssetCacheError> {
-        let font = self.fonts.get(&id).ok_or_else(|| AssetCacheError::AssetNotFound(id.clone()))?.clone();
+        let font = self
+            .fonts
+            .get(&id)
+            .ok_or_else(|| AssetCacheError::AssetNotFound(id.clone()))?
+            .clone();
 
         use std::collections::hash_map::Entry;
 

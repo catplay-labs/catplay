@@ -183,14 +183,23 @@ impl<'a> KeyframeCacheCursor<'a> {
     }
 
     fn take(&mut self, len: usize) -> Result<&'a [u8], KeyframeCacheFileError> {
-        let end = self.position.checked_add(len).ok_or(KeyframeCacheFileError::InvalidFormat("length overflow"))?;
-        let bytes = self.buf.get(self.position..end).ok_or(KeyframeCacheFileError::InvalidFormat("truncated data"))?;
+        let end = self
+            .position
+            .checked_add(len)
+            .ok_or(KeyframeCacheFileError::InvalidFormat("length overflow"))?;
+        let bytes = self
+            .buf
+            .get(self.position..end)
+            .ok_or(KeyframeCacheFileError::InvalidFormat("truncated data"))?;
         self.position = end;
         Ok(bytes)
     }
 
     fn read_u32(&mut self) -> Result<u32, KeyframeCacheFileError> {
-        let bytes: [u8; 4] = self.take(4)?.try_into().map_err(|_| KeyframeCacheFileError::InvalidFormat("invalid u32"))?;
+        let bytes: [u8; 4] = self
+            .take(4)?
+            .try_into()
+            .map_err(|_| KeyframeCacheFileError::InvalidFormat("invalid u32"))?;
         Ok(u32::from_le_bytes(bytes))
     }
 }
@@ -201,7 +210,10 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_cache_file(name: &str) -> KeyframeCacheFile {
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         KeyframeCacheFile::new(std::env::temp_dir().join(format!("catplay-keyframe-cache-{name}-{}-{unique}", std::process::id())))
     }
 

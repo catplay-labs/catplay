@@ -251,8 +251,14 @@ impl ErrorContainer {
 
     pub fn decode(body: &[u8]) -> Option<ErrorContainer> {
         let tlv = decode(body);
-        let step = *tlv.get(&(Type::State as u8)).and_then(|t| t.first()).unwrap_or(&0);
-        let error = tlv.get(&(Type::Error as u8)).and_then(|t| t.first()).and_then(|e| Error::decode(*e))?;
+        let step = *tlv
+            .get(&(Type::State as u8))
+            .and_then(|t| t.first())
+            .unwrap_or(&0);
+        let error = tlv
+            .get(&(Type::Error as u8))
+            .and_then(|t| t.first())
+            .and_then(|e| Error::decode(*e))?;
         Some(ErrorContainer::new(step, error))
     }
 }

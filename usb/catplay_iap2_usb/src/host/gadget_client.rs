@@ -71,7 +71,10 @@ impl GadgetClient {
     }
 
     pub fn open(&self) -> GadgetResult<DeviceHandle<Context>> {
-        Ok(self.device().open().inspect_err(|e| trace!("Gadget USB device has disappeared: {e:?}"))?)
+        Ok(self
+            .device()
+            .open()
+            .inspect_err(|e| trace!("Gadget USB device has disappeared: {e:?}"))?)
     }
 
     pub fn has_ncm(&self) -> bool {

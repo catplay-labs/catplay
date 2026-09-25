@@ -47,7 +47,9 @@ impl ScreenProxy {
 
 impl Drop for ScreenProxy {
     fn drop(&mut self) {
-        let _ = self.channel.unbounded_send(ScreenProxyOp::IphoneStreamFinish);
+        let _ = self
+            .channel
+            .unbounded_send(ScreenProxyOp::IphoneStreamFinish);
     }
 }
 
@@ -58,7 +60,9 @@ impl ScreenReceiverSink for ScreenProxy {
     }
 
     async fn set_avcc_config(&mut self, config: AvccConfigExtended) -> RtspResult<()> {
-        let _ = self.channel.unbounded_send(ScreenProxyOp::IphoneConfig { config });
+        let _ = self
+            .channel
+            .unbounded_send(ScreenProxyOp::IphoneConfig { config });
         Ok(())
     }
 

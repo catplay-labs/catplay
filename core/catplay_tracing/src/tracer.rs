@@ -27,7 +27,10 @@ impl SessionTracer {
     }
 
     pub fn new(name: impl AsRef<str>) -> Self {
-        let suffix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let log_path = std::path::PathBuf::from(format!("/tmp/{}.{}.log", name.as_ref(), suffix));
         let logger = if SESSION_TRACER_ENABLED.load(Ordering::Acquire) {
             match AsyncLogger::new_with_file_sink(log::LevelFilter::Trace, &log_path) {

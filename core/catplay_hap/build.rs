@@ -171,7 +171,10 @@ fn main() {
         build.file(asm_file);
     }
 
-    build.flag_if_supported("-fPIC").flag_if_supported("--target-cpu=native").compile("fast_chacha_asm");
+    build
+        .flag_if_supported("-fPIC")
+        .flag_if_supported("--target-cpu=native")
+        .compile("fast_chacha_asm");
 
     println!("cargo:rustc-cfg=fast_chacha_asm");
     let out_dir = std::env::var("OUT_DIR").unwrap();

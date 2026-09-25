@@ -267,14 +267,25 @@ mod tests {
         let verifier = ref_client.compute_verifier(b"Pair-Setup", b"3939", &salt);
         let b_pub = srp::Server::<G3072, RingSha512>::new().compute_public_ephemeral(&b, &verifier);
 
-        assert_eq!(client.compute_verifier(b"Pair-Setup", b"3939", &salt).unwrap(), verifier);
+        assert_eq!(
+            client
+                .compute_verifier(b"Pair-Setup", b"3939", &salt)
+                .unwrap(),
+            verifier
+        );
         assert_eq!(
             client.compute_public_ephemeral(&a).unwrap(),
             ref_client.compute_public_ephemeral(&a)
         );
         assert_eq!(
-            client.process_reply(&a, b"Pair-Setup", b"3939", &salt, &b_pub).unwrap().key(),
-            ref_client.process_reply(&a, b"Pair-Setup", b"3939", &salt, &b_pub).unwrap().key()
+            client
+                .process_reply(&a, b"Pair-Setup", b"3939", &salt, &b_pub)
+                .unwrap()
+                .key(),
+            ref_client
+                .process_reply(&a, b"Pair-Setup", b"3939", &salt, &b_pub)
+                .unwrap()
+                .key()
         );
     }
 
@@ -294,11 +305,24 @@ mod tests {
             ref_server.compute_public_ephemeral(&b, &verifier)
         );
         #[allow(deprecated)]
-        let legacy_key = ref_server.process_reply_legacy(&b, &verifier, &a_pub).unwrap().key().to_vec();
-        assert_eq!(server.process_reply_legacy(&b, &verifier, &a_pub).unwrap().key(), legacy_key);
+        let legacy_key = ref_server
+            .process_reply_legacy(&b, &verifier, &a_pub)
+            .unwrap()
+            .key()
+            .to_vec();
+        assert_eq!(
+            server
+                .process_reply_legacy(&b, &verifier, &a_pub)
+                .unwrap()
+                .key(),
+            legacy_key
+        );
         let b_pub = ref_server.compute_public_ephemeral(&b, &verifier);
         assert_eq!(
-            server.process_reply_legacy_with_b_pub(&b, &verifier, &a_pub, &b_pub).unwrap().key(),
+            server
+                .process_reply_legacy_with_b_pub(&b, &verifier, &a_pub, &b_pub)
+                .unwrap()
+                .key(),
             legacy_key
         );
     }

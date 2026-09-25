@@ -89,7 +89,12 @@ impl GadgetHostHelper {
                 Some((device, desc))
             })
             .flat_map(|(device, desc)| {
-                (0..desc.num_configurations()).filter_map(move |i| device.config_descriptor(i).ok().map(|o| (device.clone(), o)))
+                (0..desc.num_configurations()).filter_map(move |i| {
+                    device
+                        .config_descriptor(i)
+                        .ok()
+                        .map(|o| (device.clone(), o))
+                })
             });
 
         let udev = Self::scan()?;
@@ -127,7 +132,10 @@ impl GadgetHostHelper {
                 }
             }
 
-            let syspath = udev.iter().find(|u| u.bus_addr == bus_addr).map(|u| u.sys_path.clone());
+            let syspath = udev
+                .iter()
+                .find(|u| u.bus_addr == bus_addr)
+                .map(|u| u.sys_path.clone());
             let (Some(ep_out), Some(ep_in), Some(syspath)) = (ep_out, ep_in, syspath) else {
                 // debug!("Skipping incomplete USB gadget entry");
                 continue;

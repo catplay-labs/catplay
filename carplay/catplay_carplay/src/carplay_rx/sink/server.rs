@@ -109,7 +109,8 @@ impl AirPlayServer {
             return true;
         }
 
-        self.inviter.replace(CarPlayInviter::with_bonjour(bonjour, self.mac_addr, bonjour_entry.clone()));
+        self.inviter
+            .replace(CarPlayInviter::with_bonjour(bonjour, self.mac_addr, bonjour_entry.clone()));
         true
     }
 

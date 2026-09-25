@@ -227,9 +227,21 @@ fn controller_from_change_modes_uses_initial_permanent_entity_as_base_state() {
     let controller = ResourceController::from_change_modes(&modes);
 
     assert_eq!(controller.screen.state(), ResourceState::AccessoryHas);
-    assert!(controller.screen.can_take(ResourceTransferPriority::UserInitiated));
-    assert!(!controller.screen.can_take(ResourceTransferPriority::NiceToHave));
-    assert!(!controller.screen.can_borrow(ResourceTransferPriority::UserInitiated));
+    assert!(
+        controller
+            .screen
+            .can_take(ResourceTransferPriority::UserInitiated)
+    );
+    assert!(
+        !controller
+            .screen
+            .can_take(ResourceTransferPriority::NiceToHave)
+    );
+    assert!(
+        !controller
+            .screen
+            .can_borrow(ResourceTransferPriority::UserInitiated)
+    );
     assert_eq!(controller.main_audio.state(), ResourceState::ControllerHas);
 }
 
@@ -262,9 +274,21 @@ fn controller_from_change_modes_applies_resources_over_initial_permanent_entity(
     assert_eq!(controller.main_audio.state(), ResourceState::AccessoryBorrowed);
     assert_eq!(controller.main_audio.borrows_count, 1);
     assert_eq!(controller.screen.state(), ResourceState::AccessoryHas);
-    assert!(!controller.screen.can_take(ResourceTransferPriority::UserInitiated));
-    assert!(controller.screen.can_borrow(ResourceTransferPriority::UserInitiated));
-    assert!(!controller.screen.can_borrow(ResourceTransferPriority::NiceToHave));
+    assert!(
+        !controller
+            .screen
+            .can_take(ResourceTransferPriority::UserInitiated)
+    );
+    assert!(
+        controller
+            .screen
+            .can_borrow(ResourceTransferPriority::UserInitiated)
+    );
+    assert!(
+        !controller
+            .screen
+            .can_borrow(ResourceTransferPriority::NiceToHave)
+    );
 }
 
 #[test]
@@ -344,8 +368,16 @@ fn initial_import_treats_release_transactions_as_noop() {
         let controller = ResourceController::from_change_modes(&modes);
 
         assert_eq!(controller.screen.state(), ResourceState::AccessoryHas);
-        assert!(controller.screen.can_take(ResourceTransferPriority::UserInitiated));
-        assert!(!controller.screen.can_borrow(ResourceTransferPriority::UserInitiated));
+        assert!(
+            controller
+                .screen
+                .can_take(ResourceTransferPriority::UserInitiated)
+        );
+        assert!(
+            !controller
+                .screen
+                .can_borrow(ResourceTransferPriority::UserInitiated)
+        );
     }
 }
 

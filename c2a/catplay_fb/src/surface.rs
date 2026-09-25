@@ -250,7 +250,8 @@ impl Canvas for Surface {
     }
 
     fn blit_region<C: Canvas>(&mut self, other: &C, src_x: u32, src_y: u32, dst_x: u32, dst_y: u32, w: u32, h: u32) {
-        self.canvas().blit_region(other, src_x, src_y, dst_x, dst_y, w, h);
+        self.canvas()
+            .blit_region(other, src_x, src_y, dst_x, dst_y, w, h);
     }
 }
 

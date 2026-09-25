@@ -17,7 +17,6 @@ pub struct AirPlayTransportCodec {
     plaintext_prefix_len: usize,
 }
 
-
 impl AirPlayTransportCodec {
     const DEFAULT_BUFFER_SIZE: usize = 8192;
     const MAX_BUFFER_SIZE: usize = 8192;
@@ -32,7 +31,8 @@ impl AirPlayTransportCodec {
     }
 
     pub fn encrypt(&mut self, channel_type: AirPlayCipherSaltType, shared_secret: [u8; 32]) {
-        self.cipher_codec.replace(AirPlayCipherCodec::new(shared_secret, channel_type, self.server));
+        self.cipher_codec
+            .replace(AirPlayCipherCodec::new(shared_secret, channel_type, self.server));
     }
 
     pub fn decode(&mut self, src: &mut BytesMut) -> RtspResult<Option<Vec<RtspFrame>>> {
@@ -52,7 +52,9 @@ impl AirPlayTransportCodec {
         let mut frames = Vec::new();
         loop {
             let before = src.len();
-            let decoded = self.frame_codec.decode_with_limit(src, self.plaintext_prefix_len)?;
+            let decoded = self
+                .frame_codec
+                .decode_with_limit(src, self.plaintext_prefix_len)?;
             let consumed = before.saturating_sub(src.len());
             if consumed > 0 {
                 // `decode_with_limit` may consume bytes and still return `None`
@@ -208,7 +210,9 @@ mod tests {
                 Ok(Some(frames)) => output_frames.extend(frames),
                 Ok(None) => {}
                 Err(err) => {
-                    let prefix = encrypted_transport.plaintext_prefix_len.min(input_buf.len());
+                    let prefix = encrypted_transport
+                        .plaintext_prefix_len
+                        .min(input_buf.len());
                     let dump_start = prefix.saturating_sub(32);
                     let dump_end = (prefix + 96).min(input_buf.len());
                     panic!(
@@ -227,7 +231,10 @@ mod tests {
             }
         }
 
-        while let Some(frames) = encrypted_transport.decode(&mut input_buf).expect("transport decode should succeed") {
+        while let Some(frames) = encrypted_transport
+            .decode(&mut input_buf)
+            .expect("transport decode should succeed")
+        {
             output_frames.extend(frames);
         }
 

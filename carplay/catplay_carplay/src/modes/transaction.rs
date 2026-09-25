@@ -130,8 +130,12 @@ impl ResourcePermanentEntity {
     fn from_initial_permanent_entity(initial: &InitialPermanentEntity) -> Option<Self> {
         match initial.permanent_entity {
             EntityEnum::Accessory => Some(ResourcePermanentEntity::Accessory {
-                take_constraint: initial.take_constraint.unwrap_or(ResourceConstraint::Anytime),
-                borrow_constraint: initial.borrow_constraint.unwrap_or(ResourceConstraint::Anytime),
+                take_constraint: initial
+                    .take_constraint
+                    .unwrap_or(ResourceConstraint::Anytime),
+                borrow_constraint: initial
+                    .borrow_constraint
+                    .unwrap_or(ResourceConstraint::Anytime),
             }),
             EntityEnum::Controller => Some(ResourcePermanentEntity::Controller),
             EntityEnum::None => None,
@@ -159,14 +163,24 @@ impl ResourceTransaction {
     fn from_resource(resource: &Resource) -> Self {
         match resource.transfer_type {
             ResourceTransferType::Take => ResourceTransaction::Take {
-                priority: resource.transfer_priority.unwrap_or(ResourceTransferPriority::NiceToHave),
-                take_constraint: resource.take_constraint.unwrap_or(ResourceConstraint::Anytime),
-                borrow_constraint: resource.borrow_constraint.unwrap_or(ResourceConstraint::Anytime),
+                priority: resource
+                    .transfer_priority
+                    .unwrap_or(ResourceTransferPriority::NiceToHave),
+                take_constraint: resource
+                    .take_constraint
+                    .unwrap_or(ResourceConstraint::Anytime),
+                borrow_constraint: resource
+                    .borrow_constraint
+                    .unwrap_or(ResourceConstraint::Anytime),
             },
             ResourceTransferType::Untake => ResourceTransaction::Untake,
             ResourceTransferType::Borrow => ResourceTransaction::Borrow {
-                priority: resource.transfer_priority.unwrap_or(ResourceTransferPriority::NiceToHave),
-                unborrow_constraint: resource.unborrow_constraint.unwrap_or(ResourceConstraint::Anytime),
+                priority: resource
+                    .transfer_priority
+                    .unwrap_or(ResourceTransferPriority::NiceToHave),
+                unborrow_constraint: resource
+                    .unborrow_constraint
+                    .unwrap_or(ResourceConstraint::Anytime),
             },
             ResourceTransferType::Unborrow => ResourceTransaction::Unborrow,
         }

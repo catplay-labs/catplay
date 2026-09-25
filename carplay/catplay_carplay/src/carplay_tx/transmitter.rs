@@ -410,12 +410,18 @@ impl AirPlayTransmitterBootstrapSession {
             }
         };
 
-        let resp = client.initial_setup(req).map_err(AirPlayTransmitterBootstrapError::FailedInitialSetup).await?;
+        let resp = client
+            .initial_setup(req)
+            .map_err(AirPlayTransmitterBootstrapError::FailedInitialSetup)
+            .await?;
 
         let info_start = Instant::now();
         // Get /info
         debug!("Getting /info ...");
-        let info = client.info().map_err(AirPlayTransmitterBootstrapError::FailedInfo).await?;
+        let info = client
+            .info()
+            .map_err(AirPlayTransmitterBootstrapError::FailedInfo)
+            .await?;
         debug!("Got info: {info:?}");
         info!("Received /info in {:?}", Instant::now() - info_start);
         streams.info.replace(info);
@@ -428,7 +434,9 @@ impl AirPlayTransmitterBootstrapSession {
         // timing_server.0.connect_finish(timing_ip).map_err(AirPlayTransmitterBootstrapError::FailedToBind)?;
 
         streams.enabled_features = resp.enabled_features;
-        streams.enabled_features.retain(|f| controller_features.contains(f));
+        streams
+            .enabled_features
+            .retain(|f| controller_features.contains(f));
 
         let mut event_ip = peer_ip;
         event_ip.set_port(resp.event_port);
@@ -480,14 +488,23 @@ impl AirPlayTransmitterBootstrapSession {
 
     fn start_pair_task(&mut self) {
         let client = self.client.as_ref().expect("client missing").clone();
-        self.pair_task
-            .reset(move || async move { client.pair().await.err().map(|err| Err(AirPlayTransmitterBootstrapError::Pair(err))) });
+        self.pair_task.reset(move || async move {
+            client
+                .pair()
+                .await
+                .err()
+                .map(|err| Err(AirPlayTransmitterBootstrapError::Pair(err)))
+        });
     }
 
     fn start_auth_setup_task(&mut self) {
         let client = self.client.as_ref().expect("client missing").clone();
-        self.auth_setup_task
-            .reset(move || async move { client.auth_setup().await.map_err(AirPlayTransmitterBootstrapError::AuthSetup) });
+        self.auth_setup_task.reset(move || async move {
+            client
+                .auth_setup()
+                .await
+                .map_err(AirPlayTransmitterBootstrapError::AuthSetup)
+        });
     }
 
     fn start_setup_task(&mut self) {

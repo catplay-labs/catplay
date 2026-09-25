@@ -26,7 +26,9 @@ impl SharedBytesMutIo {
 
     #[inline]
     fn lock_state_io(&self) -> io::Result<MutexGuard<'_, SharedBytesMutIoState>> {
-        self.state.lock().map_err(|_| io::Error::other("internal state mutex poisoned"))
+        self.state
+            .lock()
+            .map_err(|_| io::Error::other("internal state mutex poisoned"))
     }
 
     fn bind_write_buffer(&self, buf: BytesMut) -> PlistResult<()> {
@@ -214,7 +216,8 @@ mod tests {
     fn test_caching_serializer_roundtrip() {
         let mut caching = CachingSerializer::new(CachingSerializer::CACHE_DEFAULT);
         let mut b = InfoMessageResponse::default();
-        b.oem_icon.replace(PlistByteArray::from(vec![1, 2, 3, 4, 5]));
+        b.oem_icon
+            .replace(PlistByteArray::from(vec![1, 2, 3, 4, 5]));
 
         let encoded = caching.serialize(&b).unwrap();
         let decoded: InfoMessageResponse = caching.deserialize(&encoded).unwrap();
@@ -226,7 +229,8 @@ mod tests {
     fn test_caching_serializer_reclaim() {
         let mut caching = CachingSerializer::new(CachingSerializer::CACHE_DEFAULT);
         let mut b = InfoMessageResponse::default();
-        b.oem_icon.replace(PlistByteArray::from(vec![1, 2, 3, 4, 5]));
+        b.oem_icon
+            .replace(PlistByteArray::from(vec![1, 2, 3, 4, 5]));
 
         let encoded1 = caching.serialize(&b).unwrap();
         let decoded1: InfoMessageResponse = plist_decode(&encoded1).unwrap();

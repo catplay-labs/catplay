@@ -177,7 +177,9 @@ impl PairingHelperTx {
 
         // Feed into local state. Don't block the event loop with CPU-heavy math
         let handle = spawn_blocking(move || {
-            state.handle(homekit.as_ref(), &payload).map_err(|(e, _)| PairingErrorTx::PairSetupLocal(e))
+            state
+                .handle(homekit.as_ref(), &payload)
+                .map_err(|(e, _)| PairingErrorTx::PairSetupLocal(e))
         });
         handle.await.unwrap()
     }
@@ -212,7 +214,9 @@ impl PairingHelperTx {
 
         // Feed into local state. Don't block the event loop with CPU-heavy math
         let handle = spawn_blocking(move || {
-            state.handle(homekit.as_ref(), &payload).map_err(|(e, _)| PairingErrorTx::PairVerifyLocal(e))
+            state
+                .handle(homekit.as_ref(), &payload)
+                .map_err(|(e, _)| PairingErrorTx::PairVerifyLocal(e))
         });
         handle.await.unwrap()
     }
@@ -237,7 +241,9 @@ impl PairingHelperTx {
         let payload = resp.payload;
 
         let handle = spawn_blocking(move || {
-            state.handle_client_response(&payload).map_err(PairingErrorTx::AuthSetupLocal)
+            state
+                .handle_client_response(&payload)
+                .map_err(PairingErrorTx::AuthSetupLocal)
         });
         handle.await.unwrap()
     }
@@ -248,8 +254,12 @@ impl PairingHelperTx {
 
         let task = async move {
             let (controller, payload_m1) = PairVerify::client().map_err(|_| PairingErrorTx::Ring)?;
-            let (controller, payload_m3) = self.pair_verify_once(controller, self.homekit.clone(), &payload_m1, deadline).await?;
-            let (controller, _) = self.pair_verify_once(controller, self.homekit.clone(), &payload_m3, deadline).await?;
+            let (controller, payload_m3) = self
+                .pair_verify_once(controller, self.homekit.clone(), &payload_m1, deadline)
+                .await?;
+            let (controller, _) = self
+                .pair_verify_once(controller, self.homekit.clone(), &payload_m3, deadline)
+                .await?;
             Result::<PairVerify, PairingErrorTx>::Ok(controller)
         };
 
@@ -283,9 +293,15 @@ impl PairingHelperTx {
 
         let task = async move {
             let (controller, payload_m1) = PairSetup::client(CARPLAY_MAGIC_PIN);
-            let (controller, payload_m3) = self.pair_setup_once(controller, self.homekit.clone(), &payload_m1, deadline).await?;
-            let (controller, payload_m5) = self.pair_setup_once(controller, self.homekit.clone(), &payload_m3, deadline).await?;
-            let (controller, _) = self.pair_setup_once(controller, self.homekit.clone(), &payload_m5, deadline).await?;
+            let (controller, payload_m3) = self
+                .pair_setup_once(controller, self.homekit.clone(), &payload_m1, deadline)
+                .await?;
+            let (controller, payload_m5) = self
+                .pair_setup_once(controller, self.homekit.clone(), &payload_m3, deadline)
+                .await?;
+            let (controller, _) = self
+                .pair_setup_once(controller, self.homekit.clone(), &payload_m5, deadline)
+                .await?;
             Result::<PairSetup, PairingErrorTx>::Ok(controller)
         };
 

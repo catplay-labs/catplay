@@ -74,7 +74,8 @@ impl YuvShadowBuffer {
     #[inline(always)]
     pub fn yuv_slices_mut(&mut self) -> [&mut [u8]; 3] {
         let offsets = self.layout.offsets_for_base(self.yuv.as_ptr() as usize);
-        self.layout.yuv_slices_mut_with_offsets(offsets, self.yuv.as_mut_slice())
+        self.layout
+            .yuv_slices_mut_with_offsets(offsets, self.yuv.as_mut_slice())
     }
 
     #[inline(always)]
@@ -172,7 +173,8 @@ impl<'a> Yuv420Buffer<'a> {
 
     #[inline(always)]
     pub fn yuv_slices_mut(&mut self) -> [&mut [u8]; 3] {
-        self.layout.yuv_slices_mut_with_offsets(self.offsets, self.yuv)
+        self.layout
+            .yuv_slices_mut_with_offsets(self.offsets, self.yuv)
     }
 
     #[inline(always)]

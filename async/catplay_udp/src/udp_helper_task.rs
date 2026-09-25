@@ -79,7 +79,11 @@ impl<F: UdpSession> UdpHelperSink<F> {
             | ErrorKind::NetworkUnreachable
             | ErrorKind::AddrNotAvailable
             | ErrorKind::NetworkDown => {
-                if self.icmp_error.try_send(io::Error::new(err.kind(), "ICMP error during sendmsg()")).is_err() {
+                if self
+                    .icmp_error
+                    .try_send(io::Error::new(err.kind(), "ICMP error during sendmsg()"))
+                    .is_err()
+                {
                     debug!("Dropped duplicate ICMP error");
                 }
             }
@@ -100,7 +104,10 @@ impl<F: UdpSession> UdpSocketPeer<F> for UdpHelperSink<F> {
     }
 
     fn send_multiple(&self, data: &[&[u8]]) -> Result<usize, F::Error> {
-        let n = self.socket.sendmmsg(data, self.peer).inspect_err(|err| self.icmp_error_spy(err))?;
+        let n = self
+            .socket
+            .sendmmsg(data, self.peer)
+            .inspect_err(|err| self.icmp_error_spy(err))?;
         Ok(n)
     }
 }

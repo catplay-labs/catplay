@@ -24,7 +24,10 @@ impl Value64 {
 
     pub fn from_f32(a: f32, b: f32) -> Self {
         Self {
-            u8: [a.to_le_bytes(), b.to_le_bytes()].concat().try_into().unwrap(),
+            u8: [a.to_le_bytes(), b.to_le_bytes()]
+                .concat()
+                .try_into()
+                .unwrap(),
         }
     }
 
@@ -34,7 +37,10 @@ impl Value64 {
 
     pub fn from_u32(a: u32, b: u32) -> Self {
         Self {
-            u8: [a.to_le_bytes(), b.to_le_bytes()].concat().try_into().unwrap(),
+            u8: [a.to_le_bytes(), b.to_le_bytes()]
+                .concat()
+                .try_into()
+                .unwrap(),
         }
     }
 

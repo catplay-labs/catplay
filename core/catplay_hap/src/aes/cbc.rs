@@ -75,12 +75,14 @@ mod tests {
 
         let mut encrypted = plaintext;
         let cbc = Aes128Cbc::new(&key, &iv);
-        cbc.encrypt_in_place(&mut encrypted).expect("CBC encrypt should succeed");
+        cbc.encrypt_in_place(&mut encrypted)
+            .expect("CBC encrypt should succeed");
 
         assert_ne!(encrypted, plaintext);
 
         let mut decrypted = encrypted;
-        cbc.decrypt_in_place(&mut decrypted).expect("CBC decrypt should succeed");
+        cbc.decrypt_in_place(&mut decrypted)
+            .expect("CBC decrypt should succeed");
 
         assert_eq!(decrypted, plaintext);
     }

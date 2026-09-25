@@ -159,7 +159,8 @@ impl AfAlgCtrAes128 {
     }
 
     pub fn apply_keystream(&mut self, data: &mut [u8]) {
-        self.try_apply_keystream(data).expect("AF_ALG ctr(aes) encrypt failed");
+        self.try_apply_keystream(data)
+            .expect("AF_ALG ctr(aes) encrypt failed");
     }
 
     pub fn try_apply_keystream(&mut self, data: &mut [u8]) -> Result<()> {
@@ -173,10 +174,14 @@ impl AfAlgCtrAes128 {
             let take = self.pending_len.min(data.len());
             xor_with_keystream(&mut data[..take], &self.pending_keystream[..take]);
             offset += take;
-            self.stream_pos = self.stream_pos.checked_add(take as u128).expect("AES-CTR stream position overflow");
+            self.stream_pos = self
+                .stream_pos
+                .checked_add(take as u128)
+                .expect("AES-CTR stream position overflow");
 
             if take < self.pending_len {
-                self.pending_keystream.copy_within(take..self.pending_len, 0);
+                self.pending_keystream
+                    .copy_within(take..self.pending_len, 0);
                 self.pending_len -= take;
                 return Ok(());
             }
@@ -193,7 +198,10 @@ impl AfAlgCtrAes128 {
             let iv = iv_add_be128(self.initial_iv, block_index);
 
             self.crypt_in_place(iv, &mut remaining[..full_len])?;
-            self.stream_pos = self.stream_pos.checked_add(full_len as u128).expect("AES-CTR stream position overflow");
+            self.stream_pos = self
+                .stream_pos
+                .checked_add(full_len as u128)
+                .expect("AES-CTR stream position overflow");
         }
 
         if tail_len > 0 {
@@ -209,7 +217,10 @@ impl AfAlgCtrAes128 {
             self.pending_keystream[..AES_BLOCK - tail_len].copy_from_slice(&output[tail_len..]);
             self.pending_len = AES_BLOCK - tail_len;
 
-            self.stream_pos = self.stream_pos.checked_add(tail_len as u128).expect("AES-CTR stream position overflow");
+            self.stream_pos = self
+                .stream_pos
+                .checked_add(tail_len as u128)
+                .expect("AES-CTR stream position overflow");
         }
 
         Ok(())
@@ -231,7 +242,9 @@ impl AfAlgCtrAes128 {
 
             let (sent_data, rest) = remaining.split_at_mut(sent);
             read_exact_fd(self.op_fd.as_raw_fd(), sent_data)?;
-            byte_offset = byte_offset.checked_add(sent).expect("AES-CTR byte offset overflow");
+            byte_offset = byte_offset
+                .checked_add(sent)
+                .expect("AES-CTR byte offset overflow");
             remaining = rest;
 
             if sent < remaining_before && !sent.is_multiple_of(AES_BLOCK) {
@@ -244,7 +257,9 @@ impl AfAlgCtrAes128 {
 
                 self.crypt_slices(&partial_block_iv, &[&zero_block], &mut keystream)?;
                 xor_with_keystream(&mut remaining[..partial_len], &keystream[within_block..within_block + partial_len]);
-                byte_offset = byte_offset.checked_add(partial_len).expect("AES-CTR byte offset overflow");
+                byte_offset = byte_offset
+                    .checked_add(partial_len)
+                    .expect("AES-CTR byte offset overflow");
                 remaining = &mut remaining[partial_len..];
             }
         }
@@ -339,7 +354,9 @@ fn xor_with_keystream(data: &mut [u8], keystream: &[u8]) {
 }
 
 fn iv_add_be128(iv: [u8; 16], block_index: u128) -> [u8; 16] {
-    u128::from_be_bytes(iv).wrapping_add(block_index).to_be_bytes()
+    u128::from_be_bytes(iv)
+        .wrapping_add(block_index)
+        .to_be_bytes()
 }
 
 fn copy_cstr_bytes(dst: &mut [u8], src: &[u8]) -> Result<()> {
@@ -473,7 +490,9 @@ unsafe fn send_afalg_skcipher_control(fd: RawFd, iv: &[u8; 16], flags: libc::c_i
     let mut control = [0u8; CONTROL_CAPACITY];
     let mut msg: libc::msghdr = unsafe { mem::zeroed() };
     msg.msg_control = control.as_mut_ptr() as *mut libc::c_void;
-    msg.msg_controllen = control_len.try_into().map_err(|_| AfAlgError::InvalidInput)?;
+    msg.msg_controllen = control_len
+        .try_into()
+        .map_err(|_| AfAlgError::InvalidInput)?;
 
     let cmsg1 = unsafe { libc::CMSG_FIRSTHDR(&msg) };
     if cmsg1.is_null() {
@@ -483,7 +502,9 @@ unsafe fn send_afalg_skcipher_control(fd: RawFd, iv: &[u8; 16], flags: libc::c_i
     unsafe {
         (*cmsg1).cmsg_level = SOL_ALG;
         (*cmsg1).cmsg_type = ALG_SET_OP;
-        (*cmsg1).cmsg_len = libc::CMSG_LEN(op_cmsg_len as u32).try_into().map_err(|_| AfAlgError::InvalidInput)?;
+        (*cmsg1).cmsg_len = libc::CMSG_LEN(op_cmsg_len as u32)
+            .try_into()
+            .map_err(|_| AfAlgError::InvalidInput)?;
     }
 
     let op = ALG_OP_ENCRYPT.to_ne_bytes();
@@ -499,7 +520,9 @@ unsafe fn send_afalg_skcipher_control(fd: RawFd, iv: &[u8; 16], flags: libc::c_i
     unsafe {
         (*cmsg2).cmsg_level = SOL_ALG;
         (*cmsg2).cmsg_type = ALG_SET_IV;
-        (*cmsg2).cmsg_len = libc::CMSG_LEN(iv_payload_len as u32).try_into().map_err(|_| AfAlgError::InvalidInput)?;
+        (*cmsg2).cmsg_len = libc::CMSG_LEN(iv_payload_len as u32)
+            .try_into()
+            .map_err(|_| AfAlgError::InvalidInput)?;
     }
 
     let iv_data = unsafe { libc::CMSG_DATA(cmsg2) };
@@ -546,9 +569,14 @@ unsafe fn send_afalg_skcipher_request_vectored_once(fd: RawFd, iv: &[u8; 16], in
 
     let mut msg: libc::msghdr = unsafe { mem::zeroed() };
     msg.msg_iov = iovecs.as_mut_ptr();
-    msg.msg_iovlen = inputs.len().try_into().map_err(|_| AfAlgError::InvalidInput)?;
+    msg.msg_iovlen = inputs
+        .len()
+        .try_into()
+        .map_err(|_| AfAlgError::InvalidInput)?;
     msg.msg_control = control.as_mut_ptr() as *mut libc::c_void;
-    msg.msg_controllen = control_len.try_into().map_err(|_| AfAlgError::InvalidInput)?;
+    msg.msg_controllen = control_len
+        .try_into()
+        .map_err(|_| AfAlgError::InvalidInput)?;
 
     let cmsg1 = unsafe { libc::CMSG_FIRSTHDR(&msg) };
     if cmsg1.is_null() {
@@ -558,7 +586,9 @@ unsafe fn send_afalg_skcipher_request_vectored_once(fd: RawFd, iv: &[u8; 16], in
     unsafe {
         (*cmsg1).cmsg_level = SOL_ALG;
         (*cmsg1).cmsg_type = ALG_SET_OP;
-        (*cmsg1).cmsg_len = libc::CMSG_LEN(op_cmsg_len as u32).try_into().map_err(|_| AfAlgError::InvalidInput)?;
+        (*cmsg1).cmsg_len = libc::CMSG_LEN(op_cmsg_len as u32)
+            .try_into()
+            .map_err(|_| AfAlgError::InvalidInput)?;
     }
 
     let op = ALG_OP_ENCRYPT.to_ne_bytes();
@@ -574,7 +604,9 @@ unsafe fn send_afalg_skcipher_request_vectored_once(fd: RawFd, iv: &[u8; 16], in
     unsafe {
         (*cmsg2).cmsg_level = SOL_ALG;
         (*cmsg2).cmsg_type = ALG_SET_IV;
-        (*cmsg2).cmsg_len = libc::CMSG_LEN(iv_payload_len as u32).try_into().map_err(|_| AfAlgError::InvalidInput)?;
+        (*cmsg2).cmsg_len = libc::CMSG_LEN(iv_payload_len as u32)
+            .try_into()
+            .map_err(|_| AfAlgError::InvalidInput)?;
     }
 
     let iv_data = unsafe { libc::CMSG_DATA(cmsg2) };
@@ -753,7 +785,8 @@ mod tests {
 
         let mut ctr = Aes128CtrKernelStream::new(&KEY, &IV).expect("AF_ALG ctr(aes) init failed");
 
-        ctr.apply_keystream(&mut data).expect("AF_ALG ctr(aes) encrypt failed");
+        ctr.apply_keystream(&mut data)
+            .expect("AF_ALG ctr(aes) encrypt failed");
 
         assert_eq!(data, CIPHERTEXT_64);
         assert_eq!(ctr.stream_pos(), 64);
@@ -769,7 +802,8 @@ mod tests {
 
         let mut off = 0usize;
         for len in splits {
-            ctr.apply_keystream(&mut data[off..off + len]).expect("AF_ALG ctr(aes) split encrypt failed");
+            ctr.apply_keystream(&mut data[off..off + len])
+                .expect("AF_ALG ctr(aes) split encrypt failed");
             off += len;
         }
 
@@ -816,7 +850,9 @@ mod tests {
         let mut kernel = Aes128CtrKernelStream::new(&KEY, &IV).expect("AF_ALG ctr(aes) init failed");
         let mut soft = Aes128CtrSoft::new(&KEY, &IV);
 
-        kernel.apply_keystream(&mut kernel_data).expect("AF_ALG ctr(aes) large encrypt failed");
+        kernel
+            .apply_keystream(&mut kernel_data)
+            .expect("AF_ALG ctr(aes) large encrypt failed");
         soft.apply_keystream(&mut soft_data);
 
         assert_eq!(kernel_data, soft_data);
@@ -846,7 +882,9 @@ mod tests {
 
             let max_chunk = (rng as usize % 64) + 1;
             let len = max_chunk.min(plain.len() - off);
-            kernel.apply_keystream(&mut plain[off..off + len]).expect("AF_ALG ctr(aes) streaming encrypt failed");
+            kernel
+                .apply_keystream(&mut plain[off..off + len])
+                .expect("AF_ALG ctr(aes) streaming encrypt failed");
             off += len;
         }
 
@@ -862,14 +900,18 @@ mod tests {
         let mut data = vec![0x5au8; LARGE_LEN];
         let mut kernel = Aes128CtrKernelStream::new(&KEY, &IV).expect("AF_ALG ctr(aes) init failed");
 
-        kernel.apply_keystream(&mut data).expect("AF_ALG ctr(aes) 1MiB encrypt failed");
+        kernel
+            .apply_keystream(&mut data)
+            .expect("AF_ALG ctr(aes) 1MiB encrypt failed");
 
         assert_eq!(kernel.stream_pos(), LARGE_LEN as u128);
         assert_ne!(data, vec![0x5au8; LARGE_LEN]);
 
         let mut kernel = Aes128CtrKernelStream::new(&KEY, &IV).expect("AF_ALG ctr(aes) init failed");
 
-        kernel.apply_keystream(&mut data).expect("AF_ALG ctr(aes) 1MiB decrypt failed");
+        kernel
+            .apply_keystream(&mut data)
+            .expect("AF_ALG ctr(aes) 1MiB decrypt failed");
 
         assert_eq!(data, vec![0x5au8; LARGE_LEN]);
     }

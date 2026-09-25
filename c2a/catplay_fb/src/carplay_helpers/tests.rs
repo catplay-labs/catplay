@@ -83,7 +83,10 @@ fn annexb_nals(data: &[u8]) -> Vec<(&[u8], usize)> {
         .iter()
         .enumerate()
         .map(|(index, &(start, prefix_len))| {
-            let end = starts.get(index + 1).map(|&(next, _)| next).unwrap_or(data.len());
+            let end = starts
+                .get(index + 1)
+                .map(|&(next, _)| next)
+                .unwrap_or(data.len());
             (&data[start..end], prefix_len)
         })
         .collect()
@@ -92,7 +95,10 @@ fn annexb_nals(data: &[u8]) -> Vec<(&[u8], usize)> {
 fn find_nal(data: &[u8], nal_type: u8) -> &[u8] {
     annexb_nals(data)
         .into_iter()
-        .find(|(nal, prefix_len)| nal.get(*prefix_len).is_some_and(|byte| byte & 0x1f == nal_type))
+        .find(|(nal, prefix_len)| {
+            nal.get(*prefix_len)
+                .is_some_and(|byte| byte & 0x1f == nal_type)
+        })
         .map(|(nal, _)| nal)
         .unwrap_or_else(|| panic!("missing NAL type {nal_type}"))
 }

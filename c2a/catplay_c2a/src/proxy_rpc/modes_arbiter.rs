@@ -233,7 +233,10 @@ impl ModesArbiter {
     }
 
     fn find_resource(request: &ChangeModes, id: ResourceID) -> Option<&Resource> {
-        request.resources.iter().find(|resource| resource.resource_id == id)
+        request
+            .resources
+            .iter()
+            .find(|resource| resource.resource_id == id)
     }
 
     fn drain_pending_peer_modes_changed_if_idle(&mut self) {

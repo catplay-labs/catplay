@@ -35,7 +35,10 @@ impl FileSession {
     }
 
     pub fn send_file(&mut self, id: FileTransferReserved, file_type: u16, setup_data: &[u8], source: FileTransferOutgoingSource) {
-        let ret = self.tx.setup(id, file_type, setup_data, source).expect("duplicate send_file");
+        let ret = self
+            .tx
+            .setup(id, file_type, setup_data, source)
+            .expect("duplicate send_file");
 
         self.queue_tx.push_back(ret.1);
     }

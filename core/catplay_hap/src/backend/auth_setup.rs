@@ -79,7 +79,9 @@ impl MfiSapSession {
 
     pub fn client() -> Result<(Self, Vec<u8>), String> {
         let client_secret = create_x25519_key_ephermal().map_err(|_| "failed to generate keypair")?;
-        let client_pubkey = client_secret.compute_public_key().map_err(|_| "failed to compute public key")?;
+        let client_pubkey = client_secret
+            .compute_public_key()
+            .map_err(|_| "failed to compute public key")?;
 
         let mut request = Vec::with_capacity(33);
         request.push(1);
@@ -143,7 +145,9 @@ impl MfiSapSession {
         };
 
         let server_secret = create_x25519_key_ephermal().map_err(|_| "failed to generate keypair")?;
-        let server_pubkey = server_secret.compute_public_key().map_err(|_| "failed to compute public key")?;
+        let server_pubkey = server_secret
+            .compute_public_key()
+            .map_err(|_| "failed to compute public key")?;
 
         let shared_secret = x25519_agree_ephermal(server_secret, &create_x25519_pubkey(&client_pubkey)).map_err(|_| "ECDH failed")?;
 
@@ -166,7 +170,9 @@ impl MfiSapSession {
 
         // Sign with MFi
         let (mut signature, certificate) = {
-            let sig = mfi.generate_challenge_response(&digest).map_err(|e| e.to_string())?;
+            let sig = mfi
+                .generate_challenge_response(&digest)
+                .map_err(|e| e.to_string())?;
             (sig, cert)
         };
 
@@ -199,15 +205,21 @@ impl MfiSapSession {
         };
 
         let cert_len = u32::from_be_bytes(body[32..36].try_into().unwrap()) as usize;
-        let sig_len_offset = 36usize.checked_add(cert_len).ok_or("invalid certificate len")?;
-        let sig_offset = sig_len_offset.checked_add(4).ok_or("invalid signature len")?;
+        let sig_len_offset = 36usize
+            .checked_add(cert_len)
+            .ok_or("invalid certificate len")?;
+        let sig_offset = sig_len_offset
+            .checked_add(4)
+            .ok_or("invalid signature len")?;
 
         if body.len() < sig_offset {
             return Err("invalid certificate len".into());
         }
 
         let sig_len = u32::from_be_bytes(body[sig_len_offset..sig_offset].try_into().unwrap()) as usize;
-        let sig_end = sig_offset.checked_add(sig_len).ok_or("invalid signature len")?;
+        let sig_end = sig_offset
+            .checked_add(sig_len)
+            .ok_or("invalid signature len")?;
         if body.len() != sig_end {
             return Err("invalid signature len".into());
         }

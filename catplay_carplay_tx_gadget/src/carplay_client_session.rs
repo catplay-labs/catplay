@@ -282,7 +282,8 @@ impl CsmSession for CarPlayClientSession {
         }
 
         if let Some(_pu) = packet.cast::<PowerSourceUpdate>() {
-            self.power_draw.replace(_pu.available_current_for_device.unwrap_or(500)); // TODO proper fallback to prev power_draw
+            self.power_draw
+                .replace(_pu.available_current_for_device.unwrap_or(500)); // TODO proper fallback to prev power_draw
 
             if self.power_sub && !self.flushed_power {
                 self.flushed_power = true;

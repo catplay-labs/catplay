@@ -91,7 +91,10 @@ fn srp_process_server_reply_legacy(b: &[u8], verifier: &[u8], a_pub: &[u8], b_pu
                 .process_reply_legacy_with_b_pub(b, verifier, a_pub, b_pub)
                 .map(|state| state.key().to_vec())
                 .map_err(|_| ()),
-            None => server.process_reply_legacy(b, verifier, a_pub).map(|state| state.key().to_vec()).map_err(|_| ()),
+            None => server
+                .process_reply_legacy(b, verifier, a_pub)
+                .map(|state| state.key().to_vec())
+                .map_err(|_| ()),
         };
     }
 
@@ -190,7 +193,11 @@ extern crate std;
 impl PairSetup {
     pub fn handle(self, homekit: &dyn HomekitStorage, body: &[u8]) -> Result<(Self, Vec<u8>), (tlv::Error, Vec<u8>)> {
         let decoded = tlv::decode(body);
-        let Some(_state) = decoded.get(&(Type::State as u8)).and_then(|d| d.first()).cloned() else {
+        let Some(_state) = decoded
+            .get(&(Type::State as u8))
+            .and_then(|d| d.first())
+            .cloned()
+        else {
             let err = tlv::ErrorContainer::new(StepNumber::Unknown as u8, tlv::Error::Unknown);
             return Err((tlv::Error::Unknown, err.encode()));
         };
@@ -358,7 +365,9 @@ const CARPLAY_CACHE: PairSetupCache = PairSetupCache {
 impl PairSetup {
     #[trace_time]
     fn handle_m1(pin: String, mut decoded: TlvContainer) -> Result<(PairSetup, tlv::Container), tlv::Error> {
-        let method = decoded.remove(&(Type::Method as u8)).ok_or(tlv::Error::Unknown)?;
+        let method = decoded
+            .remove(&(Type::Method as u8))
+            .ok_or(tlv::Error::Unknown)?;
         let is_mfi = method.len() == 1 && method[0] == 1;
 
         debug!("pair setup M1: received SRP start request mfi={}", is_mfi);
@@ -422,8 +431,12 @@ impl PairSetup {
     ) -> Result<(PairSetup, tlv::Container), tlv::Error> {
         debug!("pair setup M3: received SRP verify request");
 
-        let a_pub = decoded.remove(&(Type::PublicKey as u8)).ok_or(tlv::Error::Unknown)?;
-        let a_proof = decoded.remove(&(Type::Proof as u8)).ok_or(tlv::Error::Unknown)?;
+        let a_pub = decoded
+            .remove(&(Type::PublicKey as u8))
+            .ok_or(tlv::Error::Unknown)?;
+        let a_proof = decoded
+            .remove(&(Type::Proof as u8))
+            .ok_or(tlv::Error::Unknown)?;
 
         let verifier_key = srp_process_server_reply_legacy(&b, &verifier, &a_pub, Some(&b_pub))
             .inspect_err(|e| debug!("pair_setup error at process_reply: {e:?}"))
@@ -450,7 +463,9 @@ impl PairSetup {
     ) -> Result<(PairSetup, tlv::Container), tlv::Error> {
         debug!("pair setup M5: received exchange request");
 
-        let mut data = decoded.remove(&(Type::EncryptedData as u8)).ok_or(tlv::Error::Unknown)?;
+        let mut data = decoded
+            .remove(&(Type::EncryptedData as u8))
+            .ok_or(tlv::Error::Unknown)?;
 
         let encryption_key = hkdf_extract_and_expand(b"Pair-Setup-Encrypt-Salt", &shared_secret, b"Pair-Setup-Encrypt-Info")?;
         let nonce = Self::cipher_nonce(b"PS-Msg05");
@@ -461,11 +476,18 @@ impl PairSetup {
             .map_err(|_| tlv::Error::Authentication)
             .map(|d| tlv::decode(d))?;
 
-        let device_pairing_id = sub_tlv.get(&(Type::Identifier as u8)).ok_or(tlv::Error::Unknown)?;
-        let device_pubkey_raw = sub_tlv.get(&(Type::PublicKey as u8)).and_then(|v| key32_from_vec(v)).ok_or(tlv::Error::Unknown)?;
+        let device_pairing_id = sub_tlv
+            .get(&(Type::Identifier as u8))
+            .ok_or(tlv::Error::Unknown)?;
+        let device_pubkey_raw = sub_tlv
+            .get(&(Type::PublicKey as u8))
+            .and_then(|v| key32_from_vec(v))
+            .ok_or(tlv::Error::Unknown)?;
 
         let device_pubkey = create_ed25519_pubkey(&device_pubkey_raw);
-        let device_signature = sub_tlv.get(&(Type::Signature as u8)).ok_or(tlv::Error::Unknown)?;
+        let device_signature = sub_tlv
+            .get(&(Type::Signature as u8))
+            .ok_or(tlv::Error::Unknown)?;
 
         let device_x = hkdf_extract_and_expand(
             b"Pair-Setup-Controller-Sign-Salt",
@@ -475,7 +497,9 @@ impl PairSetup {
 
         let device_info = [&device_x, &device_pairing_id[..], &device_pubkey_raw].concat();
 
-        device_pubkey.verify(&device_info, device_signature).map_err(|_| tlv::Error::Authentication)?;
+        device_pubkey
+            .verify(&device_info, device_signature)
+            .map_err(|_| tlv::Error::Authentication)?;
 
         // if let Some(max_peers) = config.lock().await.max_peers {
         //     if storage.lock().await.count_pairings().await? + 1 > max_peers {
@@ -502,14 +526,22 @@ impl PairSetup {
 
         let mut encoded_sub_tlv = vec![
             Value::Identifier(device_id),
-            Value::PublicKey(homekit.device_ed25519_keypair().public_key().as_ref().to_vec()),
+            Value::PublicKey(
+                homekit
+                    .device_ed25519_keypair()
+                    .public_key()
+                    .as_ref()
+                    .to_vec(),
+            ),
             Value::Signature(accessory_signature.as_ref().to_vec()),
         ]
         .encode();
 
         let nonce = Self::cipher_nonce(b"PS-Msg06");
 
-        let tag = cipher.encrypt(&mut encoded_sub_tlv, &[], nonce).map_err(|_| tlv::Error::Unknown)?;
+        let tag = cipher
+            .encrypt(&mut encoded_sub_tlv, &[], nonce)
+            .map_err(|_| tlv::Error::Unknown)?;
         encoded_sub_tlv.extend_from_slice(&tag);
 
         debug!("pair setup M6: sending exchange response");
@@ -518,10 +550,12 @@ impl PairSetup {
 
         debug!("pair setup completed with controller {:?}", device_pairing_id);
 
-        homekit.add_paired(device_pairing_id, device_pubkey_raw).map_err(|err| {
-            debug!("add_paired failed: {err:?}");
-            tlv::Error::Unknown
-        })?;
+        homekit
+            .add_paired(device_pairing_id, device_pubkey_raw)
+            .map_err(|err| {
+                debug!("add_paired failed: {err:?}");
+                tlv::Error::Unknown
+            })?;
 
         Ok((
             PairSetup::Finished { device_pairing_id },
@@ -539,8 +573,12 @@ impl PairSetup {
     pub fn handle_m2(pin: String, mut decoded: TlvContainer) -> Result<(PairSetup, tlv::Container), tlv::Error> {
         debug!("pair setup M2: received SRP start response");
 
-        let salt = decoded.remove(&(Type::Salt as u8)).ok_or(tlv::Error::Unknown)?;
-        let b_pub = decoded.remove(&(Type::PublicKey as u8)).ok_or(tlv::Error::Unknown)?;
+        let salt = decoded
+            .remove(&(Type::Salt as u8))
+            .ok_or(tlv::Error::Unknown)?;
+        let b_pub = decoded
+            .remove(&(Type::PublicKey as u8))
+            .ok_or(tlv::Error::Unknown)?;
 
         let rng = SystemRandom::new();
         let mut a = [0u8; 64];
@@ -589,7 +627,9 @@ impl PairSetup {
     ) -> Result<(PairSetup, tlv::Container), tlv::Error> {
         debug!("pair setup M4: received SRP verify response");
 
-        let b_proof = decoded.remove(&(Type::Proof as u8)).ok_or(tlv::Error::Unknown)?;
+        let b_proof = decoded
+            .remove(&(Type::Proof as u8))
+            .ok_or(tlv::Error::Unknown)?;
         verify_server_proof(&a_pub, &a_proof, &shared_secret, &b_proof).map_err(|_| tlv::Error::Authentication)?;
 
         let encryption_key = hkdf_extract_and_expand(b"Pair-Setup-Encrypt-Salt", &shared_secret, b"Pair-Setup-Encrypt-Info")?;
@@ -614,7 +654,9 @@ impl PairSetup {
         ]
         .encode();
 
-        let tag = cipher.encrypt(&mut sub_tlv, &[], nonce).map_err(|_| tlv::Error::Unknown)?;
+        let tag = cipher
+            .encrypt(&mut sub_tlv, &[], nonce)
+            .map_err(|_| tlv::Error::Unknown)?;
         sub_tlv.extend_from_slice(&tag);
 
         debug!("pair setup M5: sending exchange request");
@@ -633,7 +675,9 @@ impl PairSetup {
     ) -> Result<(PairSetup, tlv::Container), tlv::Error> {
         debug!("pair setup M6: received exchange response");
 
-        let mut data = decoded.remove(&(Type::EncryptedData as u8)).ok_or(tlv::Error::Unknown)?;
+        let mut data = decoded
+            .remove(&(Type::EncryptedData as u8))
+            .ok_or(tlv::Error::Unknown)?;
 
         let encryption_key = hkdf_extract_and_expand(b"Pair-Setup-Encrypt-Salt", &shared_secret, b"Pair-Setup-Encrypt-Info")?;
         let nonce = Self::cipher_nonce(b"PS-Msg06");
@@ -644,21 +688,32 @@ impl PairSetup {
             .map_err(|_| tlv::Error::Authentication)
             .map(|d| tlv::decode(d))?;
 
-        let accessory_id = sub_tlv.get(&(Type::Identifier as u8)).ok_or(tlv::Error::Unknown)?;
-        let accessory_pubkey_raw = sub_tlv.get(&(Type::PublicKey as u8)).and_then(|v| key32_from_vec(v)).ok_or(tlv::Error::Unknown)?;
-        let signature = sub_tlv.get(&(Type::Signature as u8)).ok_or(tlv::Error::Unknown)?;
+        let accessory_id = sub_tlv
+            .get(&(Type::Identifier as u8))
+            .ok_or(tlv::Error::Unknown)?;
+        let accessory_pubkey_raw = sub_tlv
+            .get(&(Type::PublicKey as u8))
+            .and_then(|v| key32_from_vec(v))
+            .ok_or(tlv::Error::Unknown)?;
+        let signature = sub_tlv
+            .get(&(Type::Signature as u8))
+            .ok_or(tlv::Error::Unknown)?;
 
         let accessory_pubkey = create_ed25519_pubkey(&accessory_pubkey_raw);
 
         let accessory_x = hkdf_extract_and_expand(b"Pair-Setup-Accessory-Sign-Salt", &shared_secret, b"Pair-Setup-Accessory-Sign-Info")?;
         let accessory_info = [&accessory_x, &accessory_id[..], &accessory_pubkey_raw].concat();
 
-        accessory_pubkey.verify(&accessory_info, signature).map_err(|_| tlv::Error::Authentication)?;
+        accessory_pubkey
+            .verify(&accessory_info, signature)
+            .map_err(|_| tlv::Error::Authentication)?;
 
         let accessory_pairing_id = Uuid::parse_str(&String::from_utf8_lossy(accessory_id))?;
         debug!("pair setup completed with accessory {:?}", accessory_pairing_id);
 
-        storage.add_paired(accessory_pairing_id, accessory_pubkey_raw).map_err(|_| tlv::Error::Unknown)?;
+        storage
+            .add_paired(accessory_pairing_id, accessory_pubkey_raw)
+            .map_err(|_| tlv::Error::Unknown)?;
 
         Ok((
             PairSetup::Finished {
@@ -687,18 +742,30 @@ fn test_pair_setup_end_to_end() {
     let accessory = PairSetup::server(CARPLAY_MAGIC_PIN);
 
     // --- M1: Controller -> Accessory ---
-    let (accessory, payload_m2) = accessory.handle(storage_accessory, &payload_m1).expect("accessory M1 failed");
+    let (accessory, payload_m2) = accessory
+        .handle(storage_accessory, &payload_m1)
+        .expect("accessory M1 failed");
     // --- M2: Accessory -> Controller ---
-    let (controller, payload_m3) = controller.handle(storage_controller, &payload_m2).expect("controller M2 failed");
+    let (controller, payload_m3) = controller
+        .handle(storage_controller, &payload_m2)
+        .expect("controller M2 failed");
     // --- M3: Controller -> Accessory ---
-    let (accessory, payload_m4) = accessory.handle(storage_accessory, &payload_m3).expect("accessory M3 failed");
+    let (accessory, payload_m4) = accessory
+        .handle(storage_accessory, &payload_m3)
+        .expect("accessory M3 failed");
     // --- M4: Accessory -> Controller ---
-    let (controller, payload_m5) = controller.handle(storage_controller, &payload_m4).expect("controller M4 failed");
+    let (controller, payload_m5) = controller
+        .handle(storage_controller, &payload_m4)
+        .expect("controller M4 failed");
 
     // --- M5: Controller -> Accessory ---
-    let (accessory, payload_m6) = accessory.handle(storage_accessory, &payload_m5).expect("accessory M5 failed");
+    let (accessory, payload_m6) = accessory
+        .handle(storage_accessory, &payload_m5)
+        .expect("accessory M5 failed");
     // --- M6: Accessory -> Controller ---
-    let (controller, _) = controller.handle(storage_controller, &payload_m6).expect("controller M6 failed");
+    let (controller, _) = controller
+        .handle(storage_controller, &payload_m6)
+        .expect("controller M6 failed");
 
     assert_eq!(
         accessory,

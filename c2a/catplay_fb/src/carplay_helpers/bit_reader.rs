@@ -14,7 +14,10 @@ impl<'a> BitReader<'a> {
     }
 
     pub(super) fn bit(&mut self) -> RewriteResult<u8> {
-        let byte = *self.data.get(self.pos / 8).ok_or(H264FrameBufferError::X264BitstreamRewrite("truncated RBSP"))?;
+        let byte = *self
+            .data
+            .get(self.pos / 8)
+            .ok_or(H264FrameBufferError::X264BitstreamRewrite("truncated RBSP"))?;
         let bit = (byte >> (7 - self.pos % 8)) & 1;
         self.pos += 1;
         Ok(bit)

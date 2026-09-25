@@ -154,7 +154,9 @@ impl<T: AudioDecoder> RtpPlayer<T> {
             self.last_decoded_seq.replace(seq);
         }
 
-        let decoded = self.decoder.decode(packet.payload(), self.ring.writable_slice());
+        let decoded = self
+            .decoder
+            .decode(packet.payload(), self.ring.writable_slice());
 
         match decoded {
             Err(err) => {
@@ -201,7 +203,8 @@ impl<T: AudioDecoder> RtpPlayer<T> {
                     warn!("RTP player queue overflown after decode, is remote flooding us? Is audio player keeping up? {stat:?}");
                 }
 
-                self.last_decoded_ts.replace(ts + ModSeq(decoded_frames as u32));
+                self.last_decoded_ts
+                    .replace(ts + ModSeq(decoded_frames as u32));
             }
         }
     }

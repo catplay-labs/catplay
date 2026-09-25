@@ -268,7 +268,9 @@ mod tests {
         };
         let ips = vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))];
 
-        let handle = bonjour.register::<CarPlayCtrlBonjourEntry>(entry, "carplay.local.", "carplay", 7000, &[]).unwrap();
+        let handle = bonjour
+            .register::<CarPlayCtrlBonjourEntry>(entry, "carplay.local.", "carplay", 7000, &[])
+            .unwrap();
         let watcher = bonjour.watch::<CarPlayCtrlBonjourEntry>();
 
         sleep(Duration::from_secs(5)).await;

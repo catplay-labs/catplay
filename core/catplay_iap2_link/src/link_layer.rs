@@ -329,7 +329,10 @@ impl LinkLayer {
     }
 
     fn counter_offer(&self, offer: &LSPPayload, negotiation_counter: u32) -> Option<LSPPayload> {
-        let has_control = offer.sessions.iter().any(|f| f.session_type == SessionType::Control);
+        let has_control = offer
+            .sessions
+            .iter()
+            .any(|f| f.session_type == SessionType::Control);
         let counter = if has_control {
             self.lsp_negotiator.counter(offer, negotiation_counter)
         } else {
@@ -346,7 +349,11 @@ impl LinkLayer {
     }
 
     fn find_session_of_type(&self, session_type: SessionType) -> Option<u8> {
-        self.local_lsp.sessions.iter().find(|s| s.session_type == session_type).map(|s| s.id)
+        self.local_lsp
+            .sessions
+            .iter()
+            .find(|s| s.session_type == session_type)
+            .map(|s| s.id)
     }
 
     fn next_retransmit_seq(&self, now: ClockInstant) -> Option<u8> {
@@ -468,7 +475,9 @@ impl LinkLayer {
             const DETECT_RETRANSMIT: Duration = Duration::from_millis(200);
 
             let should_send_detect = self.detect_last_transmit.is_none()
-                || self.detect_last_transmit.is_some_and(|last_detect| now - last_detect > DETECT_RETRANSMIT);
+                || self
+                    .detect_last_transmit
+                    .is_some_and(|last_detect| now - last_detect > DETECT_RETRANSMIT);
 
             if should_send_detect {
                 debug!(target: self.logger, "Trying DETECT prev={:?}", self.detect_last_transmit);
@@ -526,7 +535,9 @@ impl LinkLayer {
             && let Some(v) = self.next_payload()
         {
             let peer_seq = self.peer_seq?;
-            let session = self.find_session_of_type(v.0).expect("missing session but wants to transmit");
+            let session = self
+                .find_session_of_type(v.0)
+                .expect("missing session but wants to transmit");
             let packet = Packet::new_ack(self.take_own_seq(), peer_seq, session, Some(v.1));
 
             if packet.size() > self.peer_lsp.max_len as _ {
@@ -544,7 +555,10 @@ impl LinkLayer {
 
         // 6) Empty ACK (if no session payload has cleared the "pending" status and deadline conditions are met OR we received a packet with duplicate seq)
         // Only consider sending empty ACK if nothing was sent with a payload
-        let deadline_elapsed = self.pending_ack.deadline.is_some_and(|deadline| self.clock.now() >= deadline);
+        let deadline_elapsed = self
+            .pending_ack
+            .deadline
+            .is_some_and(|deadline| self.clock.now() >= deadline);
         let ack_budget_exceeded = match self.local_lsp.max_ack {
             0 => self.pending_ack.unacked_packets >= 1,
             v => self.pending_ack.unacked_packets >= v as _,
@@ -669,7 +683,11 @@ impl LinkLayer {
                 .peer_accepted_lsp()
                 .cloned()
                 .unwrap_or_else(|| self.negotiation.local_lsp().clone());
-            self.peer_lsp = self.negotiation.accepted_peer_lsp().cloned().unwrap_or_else(|| self.local_lsp.clone());
+            self.peer_lsp = self
+                .negotiation
+                .accepted_peer_lsp()
+                .cloned()
+                .unwrap_or_else(|| self.local_lsp.clone());
             self.negotiation.transition_accepted();
             self.change_state(LinkStatus::Writable);
             debug!(target: self.logger, "Host has successfully negotiated link");
@@ -708,7 +726,9 @@ impl LinkLayer {
         let ctl = &packet.header.control;
         let header = &packet.header;
         // Don't enforce SID=0 here; cars violating this spotted in the wild
-        if self.status != LinkStatus::Negotiating /*|| header.session_id != LSPPayload::SESSION_ID_CONTROL*/ {
+        if self.status != LinkStatus::Negotiating
+        /*|| header.session_id != LSPPayload::SESSION_ID_CONTROL*/
+        {
             return;
         }
 
@@ -909,7 +929,8 @@ impl LinkLayer {
             }
             Some(Ordering::Greater) => {
                 debug!(target: self.logger, "Buffered out-of-order packet seq={} vs peer_seq+1={}. TODO: send EAK", packet.header.seq, peer_seq+1);
-                self.out_of_order.insert(packet.header.seq.0, packet.clone());
+                self.out_of_order
+                    .insert(packet.header.seq.0, packet.clone());
                 self.pending_ack.add_out_of_order_seq(packet.header.seq.0);
             }
             Some(Ordering::Less) => {
@@ -942,8 +963,15 @@ impl LinkLayer {
             return ret;
         }
 
-        let nearest_retransmit = self.retransmit_map.values().map(|entry| entry.timeout_deadline).min();
-        let nearest_deadline = [nearest_retransmit, self.pending_ack.deadline].into_iter().flatten().min();
+        let nearest_retransmit = self
+            .retransmit_map
+            .values()
+            .map(|entry| entry.timeout_deadline)
+            .min();
+        let nearest_deadline = [nearest_retransmit, self.pending_ack.deadline]
+            .into_iter()
+            .flatten()
+            .min();
         let ret = nearest_deadline.map(|deadline| deadline.saturating_duration_since(now));
         trace!("Sleep post-neg for {ret:?}");
         ret

@@ -111,13 +111,21 @@ fn stress_busy_threads() -> usize {
     std::env::var("CATPLAY_AES_CTR_STRESS_BUSY_THREADS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or_else(|| thread::available_parallelism().map(|n| n.get().saturating_sub(1)).unwrap_or(1).max(1))
+        .unwrap_or_else(|| {
+            thread::available_parallelism()
+                .map(|n| n.get().saturating_sub(1))
+                .unwrap_or(1)
+                .max(1)
+        })
 }
 
 fn make_stress_buffer(len: usize, seed: usize) -> Vec<u8> {
     let mut out = vec![0u8; len];
     for (i, byte) in out.iter_mut().enumerate() {
-        let x = (i as u32).wrapping_mul(0x45d9_f3b).wrapping_add((seed as u32).wrapping_mul(0x9e37_79b9)) ^ 0xa5a5_5a5a;
+        let x = (i as u32)
+            .wrapping_mul(0x45d9_f3b)
+            .wrapping_add((seed as u32).wrapping_mul(0x9e37_79b9))
+            ^ 0xa5a5_5a5a;
         *byte = (x as u8) ^ ((x >> 8) as u8) ^ ((x >> 16) as u8) ^ ((x >> 24) as u8);
     }
     out
@@ -167,11 +175,15 @@ fn run_kernel_ctr_stress() {
 
             thread::yield_now();
             let mut cipher = Aes128CtrKernelStream::new(&TEST_KEY, &TEST_IV).expect("AF_ALG ctr(aes) init failed");
-            cipher.apply_keystream(&mut plain).expect("AF_ALG ctr(aes) apply failed");
+            cipher
+                .apply_keystream(&mut plain)
+                .expect("AF_ALG ctr(aes) apply failed");
 
             thread::yield_now();
             let mut cipher = Aes128CtrKernelStream::new(&TEST_KEY, &TEST_IV).expect("AF_ALG ctr(aes) init failed");
-            cipher.apply_keystream(&mut plain).expect("AF_ALG ctr(aes) apply failed");
+            cipher
+                .apply_keystream(&mut plain)
+                .expect("AF_ALG ctr(aes) apply failed");
 
             if plain != original {
                 eprintln!(
@@ -252,10 +264,14 @@ fn verify_test_vectors_ext() {
 
     let mut output = expected.clone();
     let mut cipher = Aes128CtrKernelStream::new(&TEST_KEY, &TEST_IV).expect("AF_ALG ctr(aes) init failed");
-    cipher.apply_keystream(&mut output).expect("AF_ALG ctr(aes) apply failed");
+    cipher
+        .apply_keystream(&mut output)
+        .expect("AF_ALG ctr(aes) apply failed");
     warn_if_fake_encryption("kernel", &expected, &output);
     let mut cipher = Aes128CtrKernelStream::new(&TEST_KEY, &TEST_IV).expect("AF_ALG ctr(aes) init failed");
-    cipher.apply_keystream(&mut output).expect("AF_ALG ctr(aes) apply failed");
+    cipher
+        .apply_keystream(&mut output)
+        .expect("AF_ALG ctr(aes) apply failed");
     if output == expected {
         eprintln!("aes_ctr/kernel ext-round-trip: OK");
     } else {
@@ -300,7 +316,9 @@ fn aes_ctr_throughput(c: &mut Criterion) {
         let mut data = vec![0x11u8; BUFFER_LEN];
 
         b.iter(|| {
-            cipher.apply_keystream(black_box(data.as_mut_slice())).expect("AF_ALG ctr(aes) apply failed");
+            cipher
+                .apply_keystream(black_box(data.as_mut_slice()))
+                .expect("AF_ALG ctr(aes) apply failed");
         });
     });
 

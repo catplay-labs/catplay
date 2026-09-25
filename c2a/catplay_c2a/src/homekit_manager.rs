@@ -19,8 +19,10 @@ impl HomeKitManager {
         let db_path_tx = Path::new(persist_dir).join("homekit_tx_db.bin");
         let db_path_rx = Path::new(persist_dir).join("homekit_rx_db.bin");
 
-        self.homekit_tx.replace(HomekitStorageFile::file(db_path_tx.to_str().unwrap())?);
-        self.homekit_rx.replace(HomekitStorageFile::file(db_path_rx.to_str().unwrap())?);
+        self.homekit_tx
+            .replace(HomekitStorageFile::file(db_path_tx.to_str().unwrap())?);
+        self.homekit_rx
+            .replace(HomekitStorageFile::file(db_path_rx.to_str().unwrap())?);
 
         Ok(())
     }

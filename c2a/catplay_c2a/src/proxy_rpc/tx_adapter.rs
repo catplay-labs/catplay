@@ -135,14 +135,18 @@ impl TxAdapter {
     pub async fn proxy_screen(&mut self, _latency: Duration) -> RtspResult<ScreenReceiverSinkBox> {
         let screen = ScreenProxy::new(self.handle.clone().expect("handle missing"));
         let channel = screen.1;
-        let _ = self.car.unbounded_send(TxAdapterOp::ScreenChannel { channel });
+        let _ = self
+            .car
+            .unbounded_send(TxAdapterOp::ScreenChannel { channel });
         Ok(Box::new(screen.0))
     }
 
     pub fn on_init(&mut self, handle: AirPlayReceiverHandleRef) {
         // TODO move to initial setup
 
-        let _ = self.car.unbounded_send(TxAdapterOp::IphoneConnected { handle: handle.clone() });
+        let _ = self
+            .car
+            .unbounded_send(TxAdapterOp::IphoneConnected { handle: handle.clone() });
         self.handle.replace(handle);
     }
 
@@ -154,7 +158,9 @@ impl TxAdapter {
 
     pub async fn on_modes(&mut self, modes: AirPlayModeState) {
         let os = oneshot::channel();
-        let _ = self.car.unbounded_send(TxAdapterOp::Modes { modes, consumed: os.0 });
+        let _ = self
+            .car
+            .unbounded_send(TxAdapterOp::Modes { modes, consumed: os.0 });
         let _ = os.1.await;
     }
 }

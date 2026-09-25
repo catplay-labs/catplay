@@ -67,10 +67,16 @@ impl fmt::Debug for RenderOp {
                 .field("path", path)
                 .field("asset_type", asset_type)
                 .finish(),
-            Self::LoadAssetConst { id, asset_type, .. } => {
-                f.debug_struct("LoadAssetConst").field("id", id).field("asset_type", asset_type).finish()
-            }
-            Self::BlitAsset { id, rect } => f.debug_struct("BlitAsset").field("id", id).field("rect", rect).finish(),
+            Self::LoadAssetConst { id, asset_type, .. } => f
+                .debug_struct("LoadAssetConst")
+                .field("id", id)
+                .field("asset_type", asset_type)
+                .finish(),
+            Self::BlitAsset { id, rect } => f
+                .debug_struct("BlitAsset")
+                .field("id", id)
+                .field("rect", rect)
+                .finish(),
             Self::SetTextColor { argb } => f.debug_struct("SetTextColor").field("argb", argb).finish(),
             Self::DrawText {
                 text,
@@ -136,7 +142,9 @@ impl Renderer {
     }
 
     pub fn export_to_disk(&mut self, path: PathBuf) -> Result<(), RenderError> {
-        self.fb.save_surface(path.to_str().unwrap()).map_err(RenderError::ImageExportError)
+        self.fb
+            .save_surface(path.to_str().unwrap())
+            .map_err(RenderError::ImageExportError)
     }
 
     pub fn execute(&mut self, ops: &[RenderOp]) -> Result<(), RenderError> {
@@ -195,7 +203,9 @@ impl Renderer {
                     let (rx, ry, rw, rh) = (r.x, r.y, r.w, r.h);
                     let px = font_size_pt * self.dpi / 72.0;
 
-                    let font_renderer = self.assets.load_font_scale((*font_id).clone(), px.round() as _)?;
+                    let font_renderer = self
+                        .assets
+                        .load_font_scale((*font_id).clone(), px.round() as _)?;
 
                     self.fb.set_pen_color(*color);
 

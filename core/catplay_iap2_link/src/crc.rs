@@ -52,7 +52,9 @@ pub fn iap2_check_checksum_fast(data: &[u8]) -> bool {
 #[test]
 fn fast_checksum_matches_baseline() {
     for len in [0usize, 1, 7, 8, 15, 16, 31, 32, 127, 128, 255, 256, 511, 512, 1023, 1024, 4096] {
-        let payload: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(37).wrapping_add(11)).collect();
+        let payload: Vec<u8> = (0..len)
+            .map(|i| (i as u8).wrapping_mul(37).wrapping_add(11))
+            .collect();
         assert_eq!(
             iap2_gen_checksum(&payload),
             iap2_gen_checksum_fast(&payload),

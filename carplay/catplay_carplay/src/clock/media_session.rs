@@ -71,7 +71,10 @@ impl<C: Clock> MediaClock for MediaClockSession<C> {
 
     fn encode_remote(&self, pts: Instant) -> Option<NtpU64> {
         // HU wants to encode "PTS" of a HID event in iPhone-local time domain
-        let nanos = self.pll.as_ref()?.local_to_remote(self.clock.encode_ns(pts));
+        let nanos = self
+            .pll
+            .as_ref()?
+            .local_to_remote(self.clock.encode_ns(pts));
         Some(NtpU64::from_monotonic_nanos(nanos))
     }
 

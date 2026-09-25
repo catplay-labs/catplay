@@ -141,7 +141,12 @@ fn test_transmit_once_sends_syn_while_negotiating() {
 
     assert!(syn.header.control.is_syn());
     assert_eq!(
-        test.client_queue.lock().unwrap().iter().filter(|ev| matches!(ev, LinkEvent::Write(_))).count(),
+        test.client_queue
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|ev| matches!(ev, LinkEvent::Write(_)))
+            .count(),
         0
     );
 }
@@ -296,7 +301,9 @@ fn test_eak_enters_recovery_and_ack_exits() {
     let missing_seq = *test.client.retransmit_map.keys().next().unwrap();
     let eak = Packet::new_eak(
         test.server.own_seq,
-        test.server.peer_seq.expect("server peer_seq should be known after negotiation"),
+        test.server
+            .peer_seq
+            .expect("server peer_seq should be known after negotiation"),
         LSPPayload::SESSION_ID_CONTROL,
         vec![missing_seq],
     );
@@ -331,14 +338,22 @@ fn test_transmit_once_retransmits_missing_packet_in_recovery() {
 
     let eak = Packet::new_eak(
         test.server.own_seq,
-        test.server.peer_seq.expect("server peer_seq should be known after negotiation"),
+        test.server
+            .peer_seq
+            .expect("server peer_seq should be known after negotiation"),
         LSPPayload::SESSION_ID_CONTROL,
         vec![missing_seq],
     );
     test.client.read(eak.into());
 
     let queued = test.client_queue.lock().unwrap();
-    assert_eq!(queued.iter().filter(|ev| matches!(ev, LinkEvent::Write(_))).count(), 0);
+    assert_eq!(
+        queued
+            .iter()
+            .filter(|ev| matches!(ev, LinkEvent::Write(_)))
+            .count(),
+        0
+    );
     drop(queued);
 
     assert_eq!(test.client.status(), &LinkStatus::Recovery);
@@ -349,7 +364,12 @@ fn test_transmit_once_retransmits_missing_packet_in_recovery() {
 
     assert_eq!(retransmit.header.seq.0, missing_seq);
     assert_eq!(
-        test.client_queue.lock().unwrap().iter().filter(|ev| matches!(ev, LinkEvent::Write(_))).count(),
+        test.client_queue
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|ev| matches!(ev, LinkEvent::Write(_)))
+            .count(),
         0
     );
 }
@@ -374,7 +394,12 @@ fn test_transmit_once_retransmits_timed_out_packet() {
 
     assert_eq!(retransmit.header.seq.0, timed_out_seq);
     assert_eq!(
-        test.client_queue.lock().unwrap().iter().filter(|ev| matches!(ev, LinkEvent::Write(_))).count(),
+        test.client_queue
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|ev| matches!(ev, LinkEvent::Write(_)))
+            .count(),
         0
     );
 }

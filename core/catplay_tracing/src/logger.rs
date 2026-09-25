@@ -207,7 +207,9 @@ impl AsyncLogger {
     }
 
     fn parse_rust_log(value: &str) -> Option<LevelFilter> {
-        value.split(',').find_map(|directive| Self::parse_directive_level(directive.trim()))
+        value
+            .split(',')
+            .find_map(|directive| Self::parse_directive_level(directive.trim()))
     }
 
     fn parse_directive_level(directive: &str) -> Option<LevelFilter> {
@@ -215,7 +217,11 @@ impl AsyncLogger {
             return None;
         }
 
-        let level_str = directive.split_once('=').map(|(_, level)| level.trim()).unwrap_or(directive).to_ascii_lowercase();
+        let level_str = directive
+            .split_once('=')
+            .map(|(_, level)| level.trim())
+            .unwrap_or(directive)
+            .to_ascii_lowercase();
 
         match level_str.as_str() {
             "off" => Some(LevelFilter::Off),
@@ -538,7 +544,10 @@ fn file_append_string_sink_writes_and_flushes_to_random_tmp_path() {
     let suffix = format!(
         "{}-{}",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     );
     let path = std::path::PathBuf::from(format!("/tmp/test.log.{}", suffix));
 
@@ -559,7 +568,10 @@ fn secondary_logger_writes_via_t_macros_to_file_sink() {
     let suffix = format!(
         "{}-{}",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     );
     let path = std::path::PathBuf::from(format!("/tmp/secondary.log.{}", suffix));
 

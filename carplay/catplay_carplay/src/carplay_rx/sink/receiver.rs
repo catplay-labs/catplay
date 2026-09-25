@@ -500,7 +500,10 @@ impl AirPlayReceiver {
         let bon = Self::bonjour(self.profile, self.homekit.clone(), self.mac_addr);
 
         if let Ok(info) = req.get_plist::<InfoMessage>()
-            && info.qualifier.as_ref().is_some_and(|q| q.iter().any(|v| v == "txtAirPlay"))
+            && info
+                .qualifier
+                .as_ref()
+                .is_some_and(|q| q.iter().any(|v| v == "txtAirPlay"))
         {
             return resp.set_plist(InfoMessageTxtAirPlayResponse {
                 txt_airplay: bon.to_rtsp_info_string().into(),
@@ -696,7 +699,11 @@ impl AirPlayReceiver {
             };
 
             record_sink.replace(
-                match self.sink.open_microphone(stream.stream_type, audio_type, codec.input_type()).await {
+                match self
+                    .sink
+                    .open_microphone(stream.stream_type, audio_type, codec.input_type())
+                    .await
+                {
                     Err(err) => {
                         error!("Failed to open microphone sink: {err}");
                         return Err(RtspError::Code(HttpStatus::InternalServerError));

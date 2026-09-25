@@ -30,13 +30,17 @@ impl AnnexBBuilder {
         self.begin_chunk(nal_size_len, data_size)?;
         match nal_size_len {
             1 if data_size <= u8::MAX as usize => self.out.extend_from_slice(&[data_size as u8]),
-            2 if data_size <= u16::MAX as usize => self.out.extend_from_slice(&(data_size as u16).to_be_bytes()),
+            2 if data_size <= u16::MAX as usize => self
+                .out
+                .extend_from_slice(&(data_size as u16).to_be_bytes()),
             3 if data_size <= 0x00FF_FFFF => self.out.extend_from_slice(&[
                 ((data_size >> 16) & 0xFF) as u8,
                 ((data_size >> 8) & 0xFF) as u8,
                 (data_size & 0xFF) as u8,
             ]),
-            4 => self.out.extend_from_slice(&(data_size as u32).to_be_bytes()),
+            4 => self
+                .out
+                .extend_from_slice(&(data_size as u32).to_be_bytes()),
             _ => return Err(NalError::Param),
         }
         Ok(())

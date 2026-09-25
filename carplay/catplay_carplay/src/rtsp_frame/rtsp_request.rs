@@ -78,7 +78,10 @@ impl RtspRequest {
     }
 
     pub fn extract_header<'a>(headers: &'a [(HttpHeader, RtspString)], header: &HttpHeader) -> Option<&'a str> {
-        headers.iter().find(|(k, _)| k == header).map(|(_, v)| v.as_str())
+        headers
+            .iter()
+            .find(|(k, _)| k == header)
+            .map(|(_, v)| v.as_str())
     }
 
     pub fn get_header(&self, header: &HttpHeader) -> Option<&str> {
@@ -91,7 +94,8 @@ impl RtspRequest {
     }
 
     pub fn del_header(&mut self, header: &HttpHeader) {
-        self.headers.retain_mut(|(_header, _value)| _header != header);
+        self.headers
+            .retain_mut(|(_header, _value)| _header != header);
     }
 
     fn fix_dynamic_headers(&mut self) {

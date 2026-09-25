@@ -127,7 +127,8 @@ impl AirPlayTransmitter for AirPlayTransmitterProxy {
 
     async fn shutdown(&self) {
         if self.closed.borrow().is_none() {
-            self.closed.send_replace(Some(AirPlayTransmitterSessionError::Disconnected(RtspError::Closed)));
+            self.closed
+                .send_replace(Some(AirPlayTransmitterSessionError::Disconnected(RtspError::Closed)));
         }
 
         let handle = self.task.lock().unwrap().take();
@@ -148,7 +149,9 @@ impl AirPlayTransmitter for AirPlayTransmitterProxy {
     }
 
     fn send_command_noresp(&self, command: &Command, timeout: Duration) -> RtspResult<RtspFuture> {
-        self.raw_client.with_timeout(timeout).command_unchecked(command)
+        self.raw_client
+            .with_timeout(timeout)
+            .command_unchecked(command)
     }
 
     async fn assert_modes(&self, modes: AirPlayModeState) -> RtspResult<()> {
@@ -185,7 +188,10 @@ impl AirPlayTransmitter for AirPlayTransmitterProxy {
 
         let _ = self.schedule(move |t| {
             Box::pin(async move {
-                let _ = tx.send(t.do_setup_audio(latency, stream_type, audio_format, audio_type, player, recorder).await);
+                let _ = tx.send(
+                    t.do_setup_audio(latency, stream_type, audio_format, audio_type, player, recorder)
+                        .await,
+                );
             })
         });
 

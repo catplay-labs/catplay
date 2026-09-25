@@ -13,7 +13,7 @@ use crate::{
     cipher::AirPlayStreamEncryption,
     clock::MediaClockBox,
     rtsp_frame::{RtspError, RtspResult},
-    screen::{ScreenFrame, ScreenFrameCodec, tx::screen_tx_proxy::ScreenTransmitProxy},
+    screen::{ScreenFrame, ScreenFrameCodec, ScreenOpCode, ScreenSenderStats, tx::screen_tx_proxy::ScreenTransmitProxy},
     video::{AvccConfigExtended, EncodedVideoFrame},
 };
 
@@ -46,9 +46,14 @@ pub struct ScreenTransmitSession {
 
     keep_alive_interval: Duration,
     last_keepalive: Instant,
+    keep_alive_send_stats_as_body: bool,
 
     pending_ops: Arc<Mutex<VecDeque<ScreenTransmitOp>>>,
     nal_size_len: usize,
+    frames_since_keepalive: u32,
+    bytes_since_keepalive: u64,
+    queued_frames_sum: u64,
+    queued_frames_samples: u64,
 
     notify_frame_added: Notify,
     notify_frame_consumed: Notify,
@@ -64,6 +69,7 @@ impl ScreenTransmitSession {
         clock: MediaClockBox,
         max_pending_frames: usize,
         keep_alive_interval: Duration,
+        keep_alive_send_stats_as_body: bool,
         stream_latency: Duration,
     ) -> (Self, ScreenTransmitProxy) {
         let pending_ops = Arc::new(Mutex::new(VecDeque::with_capacity(max_pending_frames * 4)));
@@ -89,13 +95,45 @@ impl ScreenTransmitSession {
 
             keep_alive_interval,
             last_keepalive: Instant::now(),
+            keep_alive_send_stats_as_body,
             nal_size_len: 4,
+            frames_since_keepalive: 0,
+            bytes_since_keepalive: 0,
+            queued_frames_sum: 0,
+            queued_frames_samples: 0,
 
             pending_ops,
             notify_frame_added,
             notify_frame_consumed,
         };
         (me, proxy)
+    }
+
+    fn create_keep_alive(&mut self, now: Instant) -> ScreenFrame {
+        let elapsed = now
+            .duration_since(self.last_keepalive)
+            .as_secs_f64()
+            .max(f64::MIN_POSITIVE);
+        self.last_keepalive = now;
+
+        if !self.keep_alive_send_stats_as_body {
+            return ScreenFrame::keep_alive();
+        }
+
+        let frames = std::mem::take(&mut self.frames_since_keepalive);
+        let stats = ScreenSenderStats {
+            tx_usage_avg: std::mem::take(&mut self.bytes_since_keepalive) as f64 / elapsed,
+            encoder_current_fps: (frames as f64 / elapsed).round() as u32,
+            sent_frames_avg: frames,
+            queued_frames_avg: (std::mem::take(&mut self.queued_frames_sum) / std::mem::take(&mut self.queued_frames_samples).max(1))
+                as u32,
+            loss_avg: 0.0,
+        };
+        let frame = ScreenFrame::keep_alive_with_stats(&stats);
+        if frame.header.opcode == ScreenOpCode::KeepAliveWithBody {
+            debug!("Sending screen keep alive with stats: {frame:?}");
+        }
+        frame
     }
 
     fn close(&mut self) {
@@ -124,6 +162,11 @@ impl TcpSession for ScreenTransmitSession {
             return Ok(());
         }
 
+        if self.keep_alive_send_stats_as_body {
+            self.queued_frames_sum += ops.iter().filter(|op| op.is_frame()).count() as u64;
+            self.queued_frames_samples += 1;
+        }
+
         while let Some(elem) = ops.pop_front() {
             match elem {
                 ScreenTransmitOp::Configure(config) => {
@@ -135,18 +178,22 @@ impl TcpSession for ScreenTransmitSession {
                     warn!("Flushing video frame pts={:?} keyframe={}", frame.pts, frame.is_known_keyframe());
                     let screen_frame = ScreenFrame::video_proxied(frame, self.nal_size_len, self.clock.as_ref())
                         .map_err(|e| RtspError::UnexpectedState(format!("unexpected failure during NAL serialization: {e:?}")))?;
+                    if self.keep_alive_send_stats_as_body {
+                        self.frames_since_keepalive += 1;
+                        self.bytes_since_keepalive += screen_frame.data.len() as u64;
+                    }
                     sink.write_composite(screen_frame)?;
                     self.notify_frame_consumed.notify();
                 }
                 _ => {}
             }
         }
+        drop(ops);
 
         // Send periodic keep-alives (if outside low-power mode)
         let now = Instant::now();
         if !self.keep_alive_interval.is_zero() && now > self.last_keepalive + self.keep_alive_interval {
-            self.last_keepalive = now;
-            sink.write(ScreenFrame::keep_alive())?;
+            sink.write(self.create_keep_alive(now))?;
         }
 
         if shutting_down {
@@ -185,5 +232,42 @@ impl AsyncShutdown for ScreenTransmitSession {
 impl Drop for ScreenTransmitSession {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clock::MediaClockSession;
+
+    #[test]
+    fn keep_alive_body_requires_receiver_support() {
+        for supported in [false, true] {
+            let (mut session, _proxy) = ScreenTransmitSession::new(
+                AirPlayStreamEncryption::None,
+                1,
+                Box::new(MediaClockSession::new()),
+                8,
+                Duration::from_secs(1),
+                supported,
+                Duration::ZERO,
+            );
+            session.frames_since_keepalive = 3;
+            session.bytes_since_keepalive = 300;
+            session.queued_frames_sum = 6;
+            session.queued_frames_samples = 2;
+
+            let frame = session.create_keep_alive(session.last_keepalive + Duration::from_secs(1));
+            if supported {
+                assert_eq!(frame.header.opcode, ScreenOpCode::KeepAliveWithBody);
+                let stats = frame.sender_stats_decode().unwrap();
+                assert_eq!(stats.sent_frames_avg, 3);
+                assert_eq!(stats.queued_frames_avg, 3);
+                assert_eq!(stats.tx_usage_avg, 300.0);
+            } else {
+                assert_eq!(frame.header.opcode, ScreenOpCode::KeepAlive);
+                assert!(frame.data.is_empty());
+            }
+        }
     }
 }

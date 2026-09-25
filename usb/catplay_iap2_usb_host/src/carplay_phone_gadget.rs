@@ -214,12 +214,19 @@ impl CarPlayPhoneGadget {
 
         debug!("Creating gadget");
 
-        let udc = self.udc.as_ref().ok_or(CarPlayPhoneGadgetError::FailedGadgetCreate(GadgetError::MissingUdc))?;
+        let udc = self
+            .udc
+            .as_ref()
+            .ok_or(CarPlayPhoneGadgetError::FailedGadgetCreate(GadgetError::MissingUdc))?;
 
         let mut gadget = PhoneGadget::new(&self.iphone_instance, true, udc).map_err(CarPlayPhoneGadgetError::FailedGadgetCreate)?;
         debug!("Starting gadget");
 
-        if let Err(err) = gadget.bind().await.map_err(CarPlayPhoneGadgetError::FailedGadgetBind) {
+        if let Err(err) = gadget
+            .bind()
+            .await
+            .map_err(CarPlayPhoneGadgetError::FailedGadgetBind)
+        {
             gadget.shutdown().await;
             return Err(err);
         }
@@ -274,8 +281,7 @@ impl Reconcilable for CarPlayPhoneGadget {
         self.burst_wakeups = new.is_err()
             || matches!(
                 new,
-                Ok(CarPlayPhoneGadgetStatus::WaitingForStableMulticast)
-                    | Ok(CarPlayPhoneGadgetStatus::WaitingForAccessory { .. })
+                Ok(CarPlayPhoneGadgetStatus::WaitingForStableMulticast) | Ok(CarPlayPhoneGadgetStatus::WaitingForAccessory { .. })
             );
 
         new

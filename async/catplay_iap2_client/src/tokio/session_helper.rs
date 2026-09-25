@@ -63,7 +63,10 @@ impl ClientSessionHelper {
             let challenge = racr.authentication_challenge.data.clone();
             let mfi = mfi.clone();
 
-            let response: CsmByteArray = spawn_blocking(move || mfi.generate_challenge_response(&challenge[..])).await.unwrap()?.into();
+            let response: CsmByteArray = spawn_blocking(move || mfi.generate_challenge_response(&challenge[..]))
+                .await
+                .unwrap()?
+                .into();
             debug!("Responding to RequestAuthenticationChallengeResponse with {:?}", response);
 
             client.send(&AuthenticationResponse {

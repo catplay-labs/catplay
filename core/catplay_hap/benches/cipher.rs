@@ -31,7 +31,9 @@ fn cipher_encrypt_decrypt_fast(c: &mut Criterion) {
         let mut cipher = HomeKitCipherFast::new([42u8; 32]);
         let (mut frame, frame_start) = make_aligned_storage(FRAME_LEN);
         let frame_slice = &mut frame[frame_start..frame_start + FRAME_LEN];
-        let tag = cipher.encrypt(&mut frame_slice[..PAYLOAD_LEN], &[], HomeKitChaChaNonce(1)).unwrap();
+        let tag = cipher
+            .encrypt(&mut frame_slice[..PAYLOAD_LEN], &[], HomeKitChaChaNonce(1))
+            .unwrap();
         frame_slice[PAYLOAD_LEN..].copy_from_slice(&tag);
 
         let frame = frame.clone();
@@ -47,7 +49,9 @@ fn cipher_encrypt_decrypt_fast(c: &mut Criterion) {
         let mut cipher = HomeKitCipherFast::new([42u8; 32]);
         let (mut frame, frame_start) = make_unaligned_storage(FRAME_LEN);
         let frame_slice = &mut frame[frame_start..frame_start + FRAME_LEN];
-        let tag = cipher.encrypt(&mut frame_slice[..PAYLOAD_LEN], &[], HomeKitChaChaNonce(1)).unwrap();
+        let tag = cipher
+            .encrypt(&mut frame_slice[..PAYLOAD_LEN], &[], HomeKitChaChaNonce(1))
+            .unwrap();
         frame_slice[PAYLOAD_LEN..].copy_from_slice(&tag);
 
         let frame = frame.clone();
@@ -63,7 +67,9 @@ fn cipher_encrypt_decrypt_fast(c: &mut Criterion) {
         let mut cipher = HomeKitCipherRing::new([42u8; 32]);
         let (mut frame, frame_start) = make_aligned_storage(FRAME_LEN);
         let frame_slice = &mut frame[frame_start..frame_start + FRAME_LEN];
-        let tag = cipher.encrypt(&mut frame_slice[..PAYLOAD_LEN], &[], HomeKitChaChaNonce(1)).unwrap();
+        let tag = cipher
+            .encrypt(&mut frame_slice[..PAYLOAD_LEN], &[], HomeKitChaChaNonce(1))
+            .unwrap();
         frame_slice[PAYLOAD_LEN..].copy_from_slice(&tag);
 
         let frame = frame.clone();
@@ -79,7 +85,9 @@ fn cipher_encrypt_decrypt_fast(c: &mut Criterion) {
         let mut cipher = HomeKitCipherRing::new([42u8; 32]);
         let (mut frame, frame_start) = make_unaligned_storage(FRAME_LEN);
         let frame_slice = &mut frame[frame_start..frame_start + FRAME_LEN];
-        let tag = cipher.encrypt(&mut frame_slice[..PAYLOAD_LEN], &[], HomeKitChaChaNonce(1)).unwrap();
+        let tag = cipher
+            .encrypt(&mut frame_slice[..PAYLOAD_LEN], &[], HomeKitChaChaNonce(1))
+            .unwrap();
         frame_slice[PAYLOAD_LEN..].copy_from_slice(&tag);
 
         let frame = frame.clone();

@@ -30,7 +30,11 @@ impl AsyncShutdown for MockSink {}
 async fn test_gadget_handshake() -> Result<(), Box<dyn Error>> {
     setup_test_logger(true);
 
-    let _ = Command::new("/sbin/modprobe").arg("-q").arg("dummy_hcd").arg("num=2").status();
+    let _ = Command::new("/sbin/modprobe")
+        .arg("-q")
+        .arg("dummy_hcd")
+        .arg("num=2")
+        .status();
 
     let _ = GadgetHelper::cleanup_once();
 

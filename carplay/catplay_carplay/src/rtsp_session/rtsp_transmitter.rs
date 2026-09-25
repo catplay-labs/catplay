@@ -123,15 +123,23 @@ impl<T: RtspTransmitterCallback> TcpSession for RtspTransmitter<T> {
         if let Some(shared_secret) = self.inner.pending_encrypt.lock().unwrap().take() {
             debug!("Encrypting connection now");
 
-            sink.codec_mut().encrypt(AirPlayCipherSaltType::Control, shared_secret);
+            sink.codec_mut()
+                .encrypt(AirPlayCipherSaltType::Control, shared_secret);
             call_encrypted_event.replace(shared_secret);
         }
 
         if let Some(shared_secret) = call_encrypted_event {
-            self.callback.on_event(RtspTransmitterEvent::Encrypted { shared_secret }).await;
+            self.callback
+                .on_event(RtspTransmitterEvent::Encrypted { shared_secret })
+                .await;
         }
 
-        let out: Vec<_> = self.rtsp_drain.drain().into_iter().map(|req| req.into()).collect();
+        let out: Vec<_> = self
+            .rtsp_drain
+            .drain()
+            .into_iter()
+            .map(|req| req.into())
+            .collect();
         for req in &out {
             if let Some(tracer) = self.tracer.as_ref()
                 && let RtspFrame::Request(req) = req
@@ -184,26 +192,38 @@ impl<T: RtspTransmitterCallback> TcpSession for RtspTransmitter<T> {
     async fn on_eof(&mut self, status: Option<RtspError>) {
         warn!("Observed EOF on transmitter: {status:?}");
         self.rtsp_drain.close();
-        let _ = self.callback.on_event(RtspTransmitterEvent::Eof(status.unwrap_or(RtspError::Closed))).await;
+        let _ = self
+            .callback
+            .on_event(RtspTransmitterEvent::Eof(status.unwrap_or(RtspError::Closed)))
+            .await;
     }
 
     async fn on_connected(&mut self) -> RtspResult<()> {
-        self.callback.on_event(self.pending_init.take().unwrap()).await;
-        let _ = self.callback.on_event(RtspTransmitterEvent::Connected).await;
+        self.callback
+            .on_event(self.pending_init.take().unwrap())
+            .await;
+        let _ = self
+            .callback
+            .on_event(RtspTransmitterEvent::Connected)
+            .await;
         Ok(())
     }
 
     async fn on_peer_addr(&mut self, peer_addr: SocketAddr) -> Result<(), Self::Error> {
         debug!("peer_addr = {peer_addr}");
         self.peer_addr.replace(peer_addr);
-        self.callback.on_event(RtspTransmitterEvent::SetPeerIp(peer_addr)).await;
+        self.callback
+            .on_event(RtspTransmitterEvent::SetPeerIp(peer_addr))
+            .await;
         Ok(())
     }
 
     async fn on_local_addr(&mut self, local_addr: SocketAddr) -> Result<(), Self::Error> {
         debug!("local_addr = {local_addr}");
         self.local_addr.replace(local_addr);
-        self.callback.on_event(RtspTransmitterEvent::SetBindIp(local_addr)).await;
+        self.callback
+            .on_event(RtspTransmitterEvent::SetBindIp(local_addr))
+            .await;
         Ok(())
     }
 }

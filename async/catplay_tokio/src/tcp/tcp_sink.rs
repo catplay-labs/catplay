@@ -79,7 +79,8 @@ impl<'a, S: TcpSession> TcpSink<S> for TcpSinkBuffer<'a, S> {
         S::Codec: EncoderComposite<CItem<S::Codec>>,
         S::Error: From<<S::Codec as EncoderComposite<CItem<S::Codec>>>::Error>,
     {
-        self.codec.encode_composite(item, &mut |b| self.composites.push(b))?;
+        self.codec
+            .encode_composite(item, &mut |b| self.composites.push(b))?;
         Ok(())
     }
 }
@@ -105,7 +106,11 @@ mod tests {
     }
 
     fn collect_iovecs(queue: &mut BytesMutQueue) -> Vec<u8> {
-        queue.as_iovecs().iter().flat_map(|slice| slice.iter().copied()).collect()
+        queue
+            .as_iovecs()
+            .iter()
+            .flat_map(|slice| slice.iter().copied())
+            .collect()
     }
 
     #[derive(Clone, Debug)]
@@ -213,7 +218,13 @@ mod tests {
     #[test]
     fn drain_written_partial_two_buffers_preserves_remaining_stream() {
         let cases = [
-            (3, vec![0xaa; 2].into_iter().chain(vec![0xbb; 8]).collect::<Vec<_>>()),
+            (
+                3,
+                vec![0xaa; 2]
+                    .into_iter()
+                    .chain(vec![0xbb; 8])
+                    .collect::<Vec<_>>(),
+            ),
             (5 + 4, vec![0xbb; 4]),
         ];
 

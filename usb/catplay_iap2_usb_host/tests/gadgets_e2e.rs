@@ -45,7 +45,11 @@ pub fn init_logger() {
 
 #[tokio::test]
 async fn test_iap2_exchange() -> Result<(), Box<dyn Error>> {
-    let _ = Command::new("/sbin/modprobe").arg("-q").arg("dummy_hcd").arg("num=2").status();
+    let _ = Command::new("/sbin/modprobe")
+        .arg("-q")
+        .arg("dummy_hcd")
+        .arg("num=2")
+        .status();
 
     let _ = GadgetHelper::cleanup_once();
     let cb = || CsmSessionCallbacks::new(async move |a| a.send(&StartIdentification {}), async move |_a, _b| Ok(()));

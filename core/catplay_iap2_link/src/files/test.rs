@@ -162,17 +162,23 @@ fn setup_for_unknown_transfer_id_is_cancelled_and_reclaimed_end_to_end() {
     assert_eq!(test.client.status(), &LinkStatus::Writable);
     assert_eq!(test.server.status(), &LinkStatus::Writable);
 
-    let reserved = test.server.files().reserve_file_tx().expect("server file id");
+    let reserved = test
+        .server
+        .files()
+        .reserve_file_tx()
+        .expect("server file id");
     let file_id = reserved.0;
     let mut setup = Vec::new();
     setup.extend_from_slice(&4u64.to_be_bytes());
     setup.extend_from_slice(&0x4321u16.to_be_bytes());
 
-    test.client.files().enqueue_test_payload(FileTransferPayload {
-        file_id,
-        op: FileTransferOp::Setup,
-        payload: setup,
-    });
+    test.client
+        .files()
+        .enqueue_test_payload(FileTransferPayload {
+            file_id,
+            op: FileTransferOp::Setup,
+            payload: setup,
+        });
 
     let mut server_cancelled = false;
     let mut client_cancelled = false;
@@ -200,6 +206,10 @@ fn setup_for_unknown_transfer_id_is_cancelled_and_reclaimed_end_to_end() {
     assert!(server_cancelled);
     assert!(client_cancelled);
 
-    let reclaimed = test.server.files().reserve_file_tx().expect("reclaimed server file id");
+    let reclaimed = test
+        .server
+        .files()
+        .reserve_file_tx()
+        .expect("reclaimed server file id");
     assert_eq!(reclaimed.0, file_id);
 }

@@ -29,7 +29,9 @@ impl BitWriter {
         let mut encoded = [0u8; 9];
         let encoded_bits = {
             let mut encoder = ExpGolombEncoder::new(&mut encoded, 0).expect("non-empty Exp-Golomb buffer");
-            encoder.put_unsigned(value as u64).expect("u32 Exp-Golomb value fits in the temporary buffer");
+            encoder
+                .put_unsigned(value as u64)
+                .expect("u32 Exp-Golomb value fits in the temporary buffer");
             let (byte, bit) = encoder.close();
             byte * 8 + bit as usize
         };

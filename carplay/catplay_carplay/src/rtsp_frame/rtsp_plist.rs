@@ -8,7 +8,10 @@ impl RtspResponse {
 
     pub fn set_plist<S: PlistSerializable>(&mut self, data: S) -> RtspResult<()> {
         self.payload.clear();
-        match data.pencode_into(&mut self.payload).map_err(RtspError::SerializationFailed) {
+        match data
+            .pencode_into(&mut self.payload)
+            .map_err(RtspError::SerializationFailed)
+        {
             Ok(_) => {
                 self.set_header(HttpHeader::ContentType, "application/x-apple-binary-plist");
 
@@ -26,7 +29,10 @@ impl RtspRequest {
 
     pub fn set_plist<S: PlistSerializable>(&mut self, data: S) -> RtspResult<()> {
         self.payload.clear();
-        match data.pencode_into(&mut self.payload).map_err(RtspError::SerializationFailed) {
+        match data
+            .pencode_into(&mut self.payload)
+            .map_err(RtspError::SerializationFailed)
+        {
             Ok(_) => {
                 self.set_header(HttpHeader::ContentType, "application/x-apple-binary-plist");
 

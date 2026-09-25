@@ -38,7 +38,9 @@ where
 {
     async fn sleep(&mut self) -> Option<EventToken> {
         let mut recv = self.inner.lock().await;
-        filling_slot(&mut self.cached, recv.inner.next()).sleep().await
+        filling_slot(&mut self.cached, recv.inner.next())
+            .sleep()
+            .await
     }
 }
 
@@ -103,7 +105,9 @@ where
 {
     async fn sleep(&mut self) -> Option<EventToken> {
         // At this time it doesn't wake up for channel close(`None`), might do that in future if useful
-        filling_slot(&mut self.cached, self.inner.next()).sleep().await
+        filling_slot(&mut self.cached, self.inner.next())
+            .sleep()
+            .await
     }
 }
 

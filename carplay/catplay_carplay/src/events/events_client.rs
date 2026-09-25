@@ -59,7 +59,9 @@ impl CommandsClient for RtspQueue {
     }
 
     fn send_command_caching(&self, cmd: &Command, timeout: Duration, serializer: &mut CachingSerializer) -> RtspResult<RtspFuture> {
-        let ev = cmd.serialize_caching(serializer).map_err(RtspError::SerializationFailed)?;
+        let ev = cmd
+            .serialize_caching(serializer)
+            .map_err(RtspError::SerializationFailed)?;
         let fut = self.request_timeout(RtspRequest::with_payload(RtspMethod::Post, "/command", ev), timeout);
         Ok(fut)
     }

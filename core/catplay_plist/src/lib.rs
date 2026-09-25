@@ -246,7 +246,8 @@ mod tests {
     #[test]
     pub fn test() {
         let mut b = InfoMessageResponse::default();
-        b.oem_icon.replace(PlistByteArray::from(vec![1, 2, 3, 4, 5]));
+        b.oem_icon
+            .replace(PlistByteArray::from(vec![1, 2, 3, 4, 5]));
 
         let a = plist_encode(&b).unwrap();
         let x: InfoMessageResponse = plist_decode(&a).unwrap();

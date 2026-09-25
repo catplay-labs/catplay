@@ -150,7 +150,11 @@ impl IdentificationRejected {
             ("bluetooth_hidcomponent", self.bluetooth_hidcomponent),
         ];
 
-        let out: CsmVec<_> = map.iter().filter(|&i| i.1 == CsmFlag::Yes).map(|i| i.0).collect();
+        let out: CsmVec<_> = map
+            .iter()
+            .filter(|&i| i.1 == CsmFlag::Yes)
+            .map(|i| i.0)
+            .collect();
         out.join(",")
     }
 }

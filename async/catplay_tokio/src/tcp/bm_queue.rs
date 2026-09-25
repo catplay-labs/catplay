@@ -1,8 +1,5 @@
-use std::{
-    collections::VecDeque,
-    io::{ IoSlice},
-};
 use bytes::{Buf, BytesMut};
+use std::{collections::VecDeque, io::IoSlice};
 
 pub struct BytesMutQueue {
     pub(crate) queue: VecDeque<BytesMut>,
@@ -13,12 +10,15 @@ pub struct BytesMutQueue {
 
 struct TailPolicy {
     retain_capacity: usize,
-    shrink_threshold: usize
+    shrink_threshold: usize,
 }
 
 impl Default for TailPolicy {
     fn default() -> Self {
-        Self { retain_capacity: 8 * 1024, shrink_threshold: 256 * 1024}
+        Self {
+            retain_capacity: 8 * 1024,
+            shrink_threshold: 256 * 1024,
+        }
     }
 }
 
@@ -28,7 +28,7 @@ impl BytesMutQueue {
             queue: VecDeque::new(),
             tail: BytesMut::new(),
             out: Vec::new(),
-            policy: TailPolicy::default()
+            policy: TailPolicy::default(),
         }
     }
 

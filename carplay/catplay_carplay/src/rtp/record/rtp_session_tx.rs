@@ -49,10 +49,14 @@ impl<E: AudioEncoder> RtpSessionTx<E> {
         let mut samples_per_packet = (codec.output_type().frames_per_packet as usize * codec.output_type().channels() as usize)
             .try_into()
             .unwrap();
-        let frame_size_in_samples: NonZero<usize> = (codec.output_type().channels_per_frame as usize).try_into().unwrap();
+        let frame_size_in_samples: NonZero<usize> = (codec.output_type().channels_per_frame as usize)
+            .try_into()
+            .unwrap();
 
         if codec.output_type().format == AudioCodec::LinearPcm {
-            samples_per_packet = (MAX_FRAMES_PER_PACKET_PCM * frame_size_in_samples.get()).try_into().unwrap();
+            samples_per_packet = (MAX_FRAMES_PER_PACKET_PCM * frame_size_in_samples.get())
+                .try_into()
+                .unwrap();
         }
 
         let encoder_wakeup = Notify::new();

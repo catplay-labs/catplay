@@ -91,7 +91,10 @@ async fn derived_event_reconciler_runs_all_steps() {
         },
     };
 
-    reconciler.reconcile().await.expect("reconcile should succeed");
+    reconciler
+        .reconcile()
+        .await
+        .expect("reconcile should succeed");
 
     assert_eq!(func_calls.load(Ordering::SeqCst), 1);
     assert_eq!(child_calls.load(Ordering::SeqCst), 1);
@@ -107,7 +110,10 @@ impl EventReconciler for OrderedReconciler {
     type Error = ParentError;
 
     async fn reconcile(&mut self) -> Result<(), Self::Error> {
-        self.order.lock().expect("order lock should not be poisoned").push(self.name);
+        self.order
+            .lock()
+            .expect("order lock should not be poisoned")
+            .push(self.name);
         Ok(())
     }
 }
@@ -130,7 +136,10 @@ async fn reconcile_funcs_run_after_field_reconcilers() {
 
     impl OrderedParent {
         async fn reconcile_self(&mut self) -> Result<(), ParentError> {
-            self.order.lock().expect("order lock should not be poisoned").push("func");
+            self.order
+                .lock()
+                .expect("order lock should not be poisoned")
+                .push("func");
             Ok(())
         }
     }
@@ -150,7 +159,10 @@ async fn reconcile_funcs_run_after_field_reconcilers() {
 
     parent.reconcile().await.expect("reconcile should succeed");
 
-    let order = order.lock().expect("order lock should not be poisoned").clone();
+    let order = order
+        .lock()
+        .expect("order lock should not be poisoned")
+        .clone();
     assert_eq!(order, ["first", "second", "func"]);
 }
 
@@ -174,7 +186,10 @@ async fn mapped_reconcile_error_is_returned() {
         child: FailingChild,
     }
 
-    let err = FailingParent { child: FailingChild }.reconcile().await.expect_err("reconcile should fail");
+    let err = FailingParent { child: FailingChild }
+        .reconcile()
+        .await
+        .expect_err("reconcile should fail");
 
     assert_eq!(err, ParentError::Child(ChildError));
 }
@@ -191,7 +206,10 @@ async fn reconcile_pop_returns_and_clears_pending_error() {
 
     let mut parent = PopParent { pending: Some(ChildError) };
 
-    let err = parent.reconcile().await.expect_err("pending error should be returned");
+    let err = parent
+        .reconcile()
+        .await
+        .expect_err("pending error should be returned");
 
     assert_eq!(err, ParentError::Child(ChildError));
     assert_eq!(parent.pending, None);
@@ -209,7 +227,10 @@ async fn reconcile_pop_clone_returns_and_keeps_pending_error() {
 
     let mut parent = PopParent { pending: Some(ChildError) };
 
-    let err = parent.reconcile().await.expect_err("pending error should be returned");
+    let err = parent
+        .reconcile()
+        .await
+        .expect_err("pending error should be returned");
 
     assert_eq!(err, ParentError::Child(ChildError));
     assert_eq!(parent.pending, Some(ChildError));

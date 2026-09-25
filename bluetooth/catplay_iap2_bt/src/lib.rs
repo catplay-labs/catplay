@@ -72,7 +72,9 @@ impl BluetoothManager {
     /// Invites trusted iPhone to connect to iAP2 profile.
     pub async fn invite_iphone(adapter: &str, iphone_bt_mac: &MacAddr6) -> BluetoothResult<()> {
         let bluez = BluezManager::new();
-        bluez.iap2_connect(adapter, &iphone_bt_mac.to_string()).await?;
+        bluez
+            .iap2_connect(adapter, &iphone_bt_mac.to_string())
+            .await?;
         Ok(())
     }
 

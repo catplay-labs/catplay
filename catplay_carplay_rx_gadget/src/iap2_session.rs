@@ -187,7 +187,8 @@ impl CarPlayServerSession {
                 info!("Cover art invalidated; waiting for transfer ID {artwork_file_transfer_id}");
                 self.publish(CarPlayServerSessionEventTx::CoverArtInvalidated);
 
-                self.now_playing_next_cover_art.replace(artwork_file_transfer_id);
+                self.now_playing_next_cover_art
+                    .replace(artwork_file_transfer_id);
                 self.cover_art_transfer_start.replace(Instant::now());
             }
 
@@ -250,7 +251,10 @@ impl CarPlayServerSession {
         };
 
         fn flatten_wants(groups: &[(bool, &[u16])]) -> Vec<u16> {
-            let len = groups.iter().filter_map(|(want, ids)| want.then_some(ids.len())).sum();
+            let len = groups
+                .iter()
+                .filter_map(|(want, ids)| want.then_some(ids.len()))
+                .sum();
             let mut out = Vec::with_capacity(len);
             for (want, ids) in groups {
                 if *want {

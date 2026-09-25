@@ -12,9 +12,7 @@ use crate::{
     },
     cipher::AirPlayStreamEncryption,
     events::CommandPending,
-    msg::{
-        AudioFormat, AudioType, Command, FeedbackPayload, Setup, StreamDescriptionAudio, StreamDescriptionScreen, StreamType,
-    },
+    msg::{AudioFormat, AudioType, Command, FeedbackPayload, Setup, StreamDescriptionAudio, StreamDescriptionScreen, StreamType},
     rtp::RtpReceiver,
     rtsp_frame::{RtspError, RtspFuture, RtspResult},
     screen::tx::{ScreenTransmitProxy, ScreenTransmitSession},
@@ -245,7 +243,10 @@ impl AirPlayTransmitterImpl {
         info!("Audio setup request to send: {setup:?}");
 
         let resp = client.setup(setup).await?;
-        let resp = resp.streams.first().ok_or(RtspError::ProtocolViolationGeneric)?;
+        let resp = resp
+            .streams
+            .first()
+            .ok_or(RtspError::ProtocolViolationGeneric)?;
         if resp.stream_type != stream_type {
             return Err(RtspError::ProtocolViolationGeneric);
         }
@@ -282,7 +283,11 @@ impl AirPlayTransmitterImpl {
             match &mut self.media.screen {
                 StreamState::Unconnected { .. } => break,
                 StreamState::Stream { .. } => {
-                    let client = self.streams.client.as_ref().ok_or(RtspError::ProtocolViolation("client missing"))?;
+                    let client = self
+                        .streams
+                        .client
+                        .as_ref()
+                        .ok_or(RtspError::ProtocolViolation("client missing"))?;
                     self.media.screen.teardown_screen(client.clone(), true);
                 }
                 StreamState::Teardown { .. } => {
@@ -293,16 +298,25 @@ impl AirPlayTransmitterImpl {
             }
         }
 
-        let display = self
+        let info = self
             .streams
             .info
             .as_ref()
-            .ok_or(RtspError::ProtocolViolation("missing info"))?
+            .ok_or(RtspError::ProtocolViolation("missing info"))?;
+        let display = info
             .displays
             .first()
             .ok_or(RtspError::ProtocolViolation("missing display"))?;
-        let media_clock = self.streams.media_clock.as_ref().ok_or(RtspError::ProtocolViolation("missing clock"))?;
-        let client = self.streams.client.as_ref().ok_or(RtspError::ProtocolViolation("client missing"))?;
+        let media_clock = self
+            .streams
+            .media_clock
+            .as_ref()
+            .ok_or(RtspError::ProtocolViolation("missing clock"))?;
+        let client = self
+            .streams
+            .client
+            .as_ref()
+            .ok_or(RtspError::ProtocolViolation("client missing"))?;
         let id = rand::random::<u64>().saturating_add(1);
 
         let (session, sink) = ScreenTransmitSession::new(
@@ -311,6 +325,7 @@ impl AirPlayTransmitterImpl {
             media_clock.boxed(),
             ScreenTransmitSession::DEFAULT_MAX_PENDING_FRAMES,
             ScreenTransmitSession::DEFAULT_KEEP_ALIVE,
+            info.keep_alive_send_stats_as_body,
             latency,
         );
 
@@ -320,7 +335,10 @@ impl AirPlayTransmitterImpl {
 
         info!("Sending screen SETUP: {setup:?}");
         let resp = client.setup(setup).await?;
-        let resp = resp.streams.first().ok_or(RtspError::ProtocolViolation("invalid SETUP response"))?;
+        let resp = resp
+            .streams
+            .first()
+            .ok_or(RtspError::ProtocolViolation("invalid SETUP response"))?;
         if resp.stream_type != StreamType::Screen {
             return Err(RtspError::ProtocolViolation("invalid SETUP response #2"));
         }
@@ -331,7 +349,9 @@ impl AirPlayTransmitterImpl {
 
         // TODO: await connection and reconcile it with media stream state lifecycle.
         let socket = TcpHelper::connect_timeout(video_ip, Self::TCP_CONN_TIMEOUT_SCREEN, session)?;
-        self.media.screen.connect_with_uuid(socket, latency, display_uuid);
+        self.media
+            .screen
+            .connect_with_uuid(socket, latency, display_uuid);
 
         Ok(guard)
     }
@@ -355,7 +375,14 @@ impl AirPlayTransmitterImpl {
 
         debug!("Sending /feedback");
 
-        match self.streams.client.as_ref().unwrap().feedback_payload().await {
+        match self
+            .streams
+            .client
+            .as_ref()
+            .unwrap()
+            .feedback_payload()
+            .await
+        {
             Ok(Some(payload)) => self.handle_feedback_payload(payload),
             Ok(None) => trace!("Received /feedback without payload"),
             Err(err) => warn!("Failed to fetch /feedback payload: {err:?}"),

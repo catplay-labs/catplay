@@ -179,7 +179,10 @@ impl AccessoryGadget {
     }
 
     fn detect_phone(&self) -> AccessoryResult<Option<GadgetClient>> {
-        Ok(GadgetHostHelper::find_iphones().map_err(AccessoryError::FailedUSBDiscovery)?.into_iter().next())
+        Ok(GadgetHostHelper::find_iphones()
+            .map_err(AccessoryError::FailedUSBDiscovery)?
+            .into_iter()
+            .next())
     }
 
     async fn stop_gadget(&mut self) -> AccessoryResult<()> {
@@ -200,11 +203,18 @@ impl AccessoryGadget {
 
         debug!("Creating gadget");
 
-        let udc = self.udc.as_ref().ok_or(AccessoryError::FailedGadgetCreate(GadgetError::MissingUdc))?;
+        let udc = self
+            .udc
+            .as_ref()
+            .ok_or(AccessoryError::FailedGadgetCreate(GadgetError::MissingUdc))?;
         let mut gadget = Gadget::new(self.carplay /* is_carplay */, udc, true /* otg */).map_err(AccessoryError::FailedGadgetCreate)?;
 
         debug!("Starting gadget");
-        if let Err(err) = gadget.bind().await.map_err(AccessoryError::FailedGadgetBind) {
+        if let Err(err) = gadget
+            .bind()
+            .await
+            .map_err(AccessoryError::FailedGadgetBind)
+        {
             gadget.shutdown().await;
             return Err(err);
         }
@@ -214,7 +224,11 @@ impl AccessoryGadget {
             // Only on the reverse side we need to stay flexible talking to different headunits
             // with possible fallback to IPv4 and DHCP.
             let ip = NcmHelper::LINK_LOCAL_IP_CAR;
-            if let Err(err) = gadget.bind_ncm(ip).await.map_err(AccessoryError::FailedNCMExport) {
+            if let Err(err) = gadget
+                .bind_ncm(ip)
+                .await
+                .map_err(AccessoryError::FailedNCMExport)
+            {
                 gadget.shutdown().await;
                 return Err(err);
             }
@@ -443,7 +457,9 @@ impl Reconcilable for AccessoryGadget {
                 }
 
                 let iface = gadget.ncm_name().map_err(AccessoryError::FailedNCMExport)?;
-                let mac_addr = gadget.mac_address().map_err(AccessoryError::FailedNCMExport)?;
+                let mac_addr = gadget
+                    .mac_address()
+                    .map_err(AccessoryError::FailedNCMExport)?;
 
                 if let Some(iface) = iface
                     && let Some(mac_addr) = mac_addr

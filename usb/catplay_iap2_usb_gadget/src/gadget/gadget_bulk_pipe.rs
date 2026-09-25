@@ -104,7 +104,9 @@ impl GadgetBulkPipe {
         }
 
         loop {
-            let rx_buf = rx_read_buf.take().unwrap_or_else(|| BytesMut::with_capacity(rx_buffer));
+            let rx_buf = rx_read_buf
+                .take()
+                .unwrap_or_else(|| BytesMut::with_capacity(rx_buffer));
 
             match rx.recv_async(rx_buf).await {
                 Ok(Some(rx_buf)) => return Some(Ok(rx_buf)),

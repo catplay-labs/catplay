@@ -127,7 +127,9 @@ mod tests {
         let short_len = short.len();
 
         let mut dec = HomeKitCipherRing::new(key);
-        let ret = dec.decrypt_progressive(&mut short, aad, nonce, 0, short_len, 16).unwrap();
+        let ret = dec
+            .decrypt_progressive(&mut short, aad, nonce, 0, short_len, 16)
+            .unwrap();
 
         assert!(ret.is_empty());
         assert_eq!(&short, b"tiny-chunk");
@@ -141,7 +143,9 @@ mod tests {
         let mut buf = [0u8; 32];
 
         let mut dec = HomeKitCipherRing::new(key);
-        let err = dec.decrypt_progressive(&mut buf, aad, nonce, 0, 17, 16).unwrap_err();
+        let err = dec
+            .decrypt_progressive(&mut buf, aad, nonce, 0, 17, 16)
+            .unwrap_err();
 
         assert!(matches!(err, HomeKitCipherError::UnexpectedDecryptedLength));
     }
@@ -155,7 +159,9 @@ mod tests {
 
         let mut enc = HomeKitCipherRing::new(key);
         let mut ciphertext = plaintext.clone();
-        let tag = enc.encrypt(&mut ciphertext, aad, HomeKitChaChaNonce(nonce.0)).unwrap();
+        let tag = enc
+            .encrypt(&mut ciphertext, aad, HomeKitChaChaNonce(nonce.0))
+            .unwrap();
 
         let mut frame = ciphertext.clone();
         frame.extend_from_slice(&tag);

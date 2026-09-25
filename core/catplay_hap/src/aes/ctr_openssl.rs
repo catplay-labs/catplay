@@ -19,7 +19,10 @@ impl Aes128CtrOpenSsl {
     }
 
     pub fn apply_keystream(&mut self, data: &mut [u8]) {
-        let count = self.inner.cipher_update_inplace(data, data.len()).expect("AES-128-CTR update failed");
+        let count = self
+            .inner
+            .cipher_update_inplace(data, data.len())
+            .expect("AES-128-CTR update failed");
         debug_assert_eq!(count, data.len());
     }
 }

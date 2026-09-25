@@ -65,7 +65,12 @@ impl BluezPinAgentStore {
     ///
     /// Next calls will continue to return a copy of the same request, unless it's accepted or cancelled.
     pub fn get_pending(&self) -> Option<PairingRequest> {
-        self.pending.lock().unwrap().as_ref().cloned().take_if(|p| !p.is_resolved())
+        self.pending
+            .lock()
+            .unwrap()
+            .as_ref()
+            .cloned()
+            .take_if(|p| !p.is_resolved())
     }
 
     fn store(&self, req: PairingRequest) {
@@ -145,7 +150,12 @@ impl BluezPinAgent {
     }
 
     async fn device_is_paired_or_bonded(proxy: &Proxy<'_, Arc<dbus::nonblock::SyncConnection>>) -> bool {
-        Self::get_device_bool(proxy, "Bonded").await.unwrap_or(false) || Self::get_device_bool(proxy, "Paired").await.unwrap_or(false)
+        Self::get_device_bool(proxy, "Bonded")
+            .await
+            .unwrap_or(false)
+            || Self::get_device_bool(proxy, "Paired")
+                .await
+                .unwrap_or(false)
     }
 
     async fn get_device_bool(proxy: &Proxy<'_, Arc<dbus::nonblock::SyncConnection>>, key: &str) -> Result<bool, dbus::Error> {

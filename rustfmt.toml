@@ -1,3 +1,2 @@
 max_width = 140
-chain_width = 100
-single_line_if_else = true
+chain_width = 60

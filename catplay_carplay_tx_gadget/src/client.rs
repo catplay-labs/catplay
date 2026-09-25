@@ -76,7 +76,11 @@ impl CarPlayUsbClientGadget {
     }
 
     fn connect_bonjour(&mut self, invite: &BonjourEntry<AirPlayBonjourEntry>) -> ClientResult<()> {
-        let peer_ip = *invite.meta.addrs.first().ok_or(CarPlayUsbClientGadgetError::UnexpectedState)?;
+        let peer_ip = *invite
+            .meta
+            .addrs
+            .first()
+            .ok_or(CarPlayUsbClientGadgetError::UnexpectedState)?;
 
         let bootstrap = AirPlayTransmitterBootstrap {
             homekit: self.homekit.clone(),
@@ -85,7 +89,8 @@ impl CarPlayUsbClientGadget {
             remote_homekit_id: invite.data.pi,
         };
 
-        self.pending_connect.replace(LazyAsync::new(move || AirPlayTransmitterProxy::connect(bootstrap)));
+        self.pending_connect
+            .replace(LazyAsync::new(move || AirPlayTransmitterProxy::connect(bootstrap)));
         Ok(())
     }
 }

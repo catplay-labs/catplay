@@ -162,7 +162,8 @@ impl<T: EventServerCallback> TcpSession for EventsServer<T> {
             self.next_id += 1;
 
             if request.url != "/command" {
-                self.completed.insert(id, RtspResponse::new(None, HttpStatus::NotFound));
+                self.completed
+                    .insert(id, RtspResponse::new(None, HttpStatus::NotFound));
                 continue;
             }
 

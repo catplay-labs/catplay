@@ -103,12 +103,16 @@ mod tests {
     #[tokio::test]
     async fn filling_slot_map_filters_output() {
         let mut slot = None;
-        let token = filling_slot_map(&mut slot, async { Ok::<_, i32>(()) }, Result::err).sleep().await;
+        let token = filling_slot_map(&mut slot, async { Ok::<_, i32>(()) }, Result::err)
+            .sleep()
+            .await;
 
         assert_eq!(token, None);
         assert_eq!(slot, None);
 
-        let token = filling_slot_map(&mut slot, async { Err::<(), _>(9) }, Result::err).sleep().await;
+        let token = filling_slot_map(&mut slot, async { Err::<(), _>(9) }, Result::err)
+            .sleep()
+            .await;
 
         assert_eq!(token, Some(EventToken(1)));
         assert_eq!(slot, Some(9));

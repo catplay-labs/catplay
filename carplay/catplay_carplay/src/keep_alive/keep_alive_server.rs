@@ -16,9 +16,7 @@ pub struct KeepAliveServer {
 
 impl KeepAliveServer {
     pub fn new() -> Self {
-        Self {
-            last_received: None,
-        }
+        Self { last_received: None }
     }
 }
 
