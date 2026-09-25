@@ -51,6 +51,8 @@ pub struct ProdGadget {
 
     last_tx: Arc<Mutex<Option<ProdGadgetSession>>>,
     burst_wakeups: bool,
+    car_wait_since: Option<Instant>,
+    last_hb: Option<Instant>,
 }
 
 #[derive(Clone, PartialEq, Debug, thiserror::Error)]
@@ -110,6 +112,8 @@ impl ProdGadget {
                 pending_transmitter: Default::default(),
                 last_tx: Default::default(),
                 burst_wakeups: false,
+                car_wait_since: None,
+                last_hb: None,
             },
             Ok(ProdGadgetState::Initial),
         )
@@ -280,14 +284,34 @@ impl Reconcilable for ProdGadget {
             ProdGadgetState::WaitingForWirelessCarPlayGadget => {
                 ProdGadgetState::WaitingForCar.into()
             }
-            ProdGadgetState::WaitingForCar => match tx.state() {
-                Ok(CarPlayUsbClientGadgetStatus::Transmitting | CarPlayUsbClientGadgetStatus::TransmitterReadyForPickup) => {
-                    ProdGadgetState::WaitingForIPhone.into()
-                }
-
-                _ if pending_transmitter.is_some() => ProdGadgetState::WaitingForIPhone.into(),
-                _ => ProdGadgetState::WaitingForCar.into(),
-            },
+            ProdGadgetState::WaitingForCar => {
+                let car_state = match tx.state() {
+                    Ok(CarPlayUsbClientGadgetStatus::Transmitting | CarPlayUsbClientGadgetStatus::TransmitterReadyForPickup) => {
+                        self.car_wait_since = None;
+                        ProdGadgetState::WaitingForIPhone.into()
+                    }
+                    _ if pending_transmitter.is_some() => {
+                        self.car_wait_since = None;
+                        ProdGadgetState::WaitingForIPhone.into()
+                    }
+                    _ => {
+                        let since = *self.car_wait_since.get_or_insert(update);
+                        if since.elapsed() >= Duration::from_secs(30)
+                            && self.last_hb.map_or(true, |t| t.elapsed() >= Duration::from_secs(30))
+                        {
+                            self.last_hb = Some(Instant::now());
+                            info!(
+                                "Still WaitingForCar after {}s: tx={:?} rx={:?}",
+                                since.elapsed().as_secs_f32(),
+                                tx.state(),
+                                rx.state()
+                            );
+                        }
+                        ProdGadgetState::WaitingForCar.into()
+                    }
+                };
+                car_state
+            }
             ProdGadgetState::WaitingForIPhone => match rx.state() {
                 Ok(CarPlayWirelessGadgetState::Receiving) => ProdGadgetState::Running.into(),
                 _ => ProdGadgetState::WaitingForIPhone.into(),

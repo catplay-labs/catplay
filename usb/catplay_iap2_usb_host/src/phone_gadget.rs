@@ -4,7 +4,7 @@ use catplay_util::{
     AsyncShutdown, EventReconciler, EventSleeper,
     io::{Ready as IoReady, SysfsNotify},
 };
-use log::{debug, info, warn};
+use log::{info, warn};
 
 use catplay_iap2_usb::{GadgetError, GadgetResult, NcmHelper};
 
@@ -105,7 +105,7 @@ impl EventReconciler for PhoneGadget {
 
         let new_status = self.phone_bridge.status();
         if new_status != self.status {
-            debug!("New phone status: {new_status:?}");
+            info!("New phone status: {new_status:?}");
 
             if let Some(accessory) = new_status.as_accessory()
                 && let Some(interface) = accessory.ncm
