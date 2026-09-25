@@ -123,12 +123,16 @@ pub struct CarPlayPhoneGadget {
 
     csm: CsmSessionCallback,
     burst_wakeups: bool,
+    status_now: CarPlayPhoneGadgetStatus,
+    state_since: Instant,
+    last_hb: Option<Instant>,
 }
 
 impl CarPlayPhoneGadget {
     const RESTART_DELAY: Duration = Duration::from_millis(1000);
     const ACCESSORY_DETECT_TIMEOUT: Duration = Duration::from_millis(5000);
     const TIMEOUT_IAP2_NEGOTIATE: Duration = Duration::from_millis(8000);
+    const WAIT_HEARTBEAT: Duration = Duration::from_secs(30);
 
     pub fn new_with_csm<T: CsmSession, F: Fn() -> T + Send + Sync + 'static>(
         udc: Option<&str>,
@@ -153,6 +157,9 @@ impl CarPlayPhoneGadget {
             accessory_iap2: None,
             csm,
             burst_wakeups: false,
+            status_now: CarPlayPhoneGadgetStatus::Initial,
+            state_since: Instant::now(),
+            last_hb: None,
         };
         Ok(Reconciler::new(me, Ok(CarPlayPhoneGadgetStatus::Initial)))
     }
@@ -163,7 +170,8 @@ impl CarPlayPhoneGadget {
         let session = (self.csm)();
         let client = AsyncClient::new(true, CsmRemote::usb_gadget(), session);
         // self.accessory_iap2_status.replace(client.0.subscribe());
-        let fd = IAP2Fd::open("/dev/iap2-0").expect("TODO");
+        info!("Opening iAP2 FD /dev/iap2-0 for car session");
+        let fd = IAP2Fd::open("/dev/iap2-0").expect("/dev/iap2-0 not openable (g_iphone/iap2_char driver?)");
 
         let pipe = AsyncClientStream::new(client.0, client.1, fd);
         self.accessory_iap2.replace(pipe);
@@ -185,6 +193,13 @@ impl AsyncShutdown for CarPlayPhoneGadget {
 }
 
 impl CarPlayPhoneGadget {
+    fn is_waiting(st: &CarPlayPhoneGadgetStatus) -> bool {
+        !matches!(
+            st,
+            CarPlayPhoneGadgetStatus::Initial | CarPlayPhoneGadgetStatus::CarPlaySession { .. }
+        )
+    }
+
     pub async fn stop_gadget(&mut self) -> PhoneResult<()> {
         if let Some(mut gadget) = self.gadget.take() {
             let _ = gadget.unbind().await;
@@ -226,11 +241,14 @@ impl CarPlayPhoneGadget {
 
 impl EventSleeper for CarPlayPhoneGadget {
     async fn sleep(&mut self) -> Option<catplay_util::EventToken> {
+        let waiting = Self::is_waiting(&self.status_now);
         event_select!(
             self.gadget,
             self.accessory_iap2,
             deadline_after(if self.burst_wakeups {
                 Duration::from_millis(20)
+            } else if waiting {
+                Self::WAIT_HEARTBEAT
             } else {
                 Duration::MAX
             })
@@ -243,8 +261,15 @@ impl Reconcilable for CarPlayPhoneGadget {
 
     async fn on_update(&mut self, new: PhoneState) -> PhoneState {
         match new {
-            Ok(ref ok) => info!("Progressing -> {ok:?}"),
-            Err(ref err) => error!("Entered error state: {err}"),
+            Ok(ref ok) => {
+                info!("Progressing -> {ok:?}");
+                self.status_now = ok.clone();
+                self.state_since = Instant::now();
+            }
+            Err(ref err) => {
+                error!("Entered error state: {err}");
+                self.status_now = CarPlayPhoneGadgetStatus::Initial;
+            }
         };
 
         if new.is_err() {
@@ -285,6 +310,16 @@ impl Reconcilable for CarPlayPhoneGadget {
             }
 
             let gstatus = gadget.status();
+            if Self::is_waiting(&status)
+                && update.elapsed() >= Self::WAIT_HEARTBEAT
+                && self.last_hb.map_or(true, |t| t.elapsed() >= Self::WAIT_HEARTBEAT)
+            {
+                self.last_hb = Some(Instant::now());
+                info!(
+                    "Car USB: still waiting in {status:?} for {}s (raw gadget status: {gstatus:?})",
+                    self.state_since.elapsed().as_secs_f32()
+                );
+            }
             if gstatus.is_final() && !gstatus.is_role_switch() {
                 return CarPlayPhoneGadgetError::AccessoryDisconnectedWithoutRoleSwitch(gstatus).into();
             }
@@ -309,7 +344,9 @@ impl Reconcilable for CarPlayPhoneGadget {
             // TODO ugly
                 && !matches!(status, CarPlayPhoneGadgetStatus::CarPlaySession { .. })
             {
-                self.accessory.replace(gstatus.as_accessory().unwrap());
+                let acc = gstatus.as_accessory().unwrap();
+                info!("Car USB accessory detected: vid={} pid={} ncm={:?}", acc.vid, acc.pid, acc.ncm);
+                self.accessory.replace(acc);
                 return CarPlayPhoneGadgetStatus::DetectedAccessory.into();
             }
 

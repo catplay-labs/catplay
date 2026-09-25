@@ -4,8 +4,12 @@ use crate::{
 };
 use catplay_bt::BluezManager;
 use catplay_util::{EventReconciler, EventSleeper, EventToken, LazyAsync};
-use log::{debug, warn};
+use log::{debug, info, warn};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+
+/// Rate-limits warn-level reports from the pin-agent retry loop.
+static PIN_AGENT_FAIL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 pub struct OverlayPolicyDefault {
     bluez: LazyAsync<BluezManager>,
@@ -26,16 +30,23 @@ impl OverlayPolicyDefault {
             let mut mgr = BluezManager::new();
             match mgr.register_pin_agent().await {
                 Ok(()) => {
-                    if let Err(err) = mgr.set_discoverable("hci0", true).await {
-                        warn!("Failed to set BlueZ adapter discoverable: {err}");
+                    match mgr.set_discoverable("hci0", true).await {
+                        Ok(()) => info!("BlueZ hci0 now Discoverable (DiscoverableTimeout 0)"),
+                        Err(err) => warn!("Failed to set BlueZ adapter discoverable: {err}"),
                     }
-                    if let Err(err) = mgr.set_pairable("hci0", true).await {
-                        warn!("Failed to set BlueZ adapter pairable: {err}");
+                    match mgr.set_pairable("hci0", true).await {
+                        Ok(()) => info!("BlueZ hci0 now Pairable"),
+                        Err(err) => warn!("Failed to set BlueZ adapter pairable: {err}"),
                     }
                     return mgr;
                 }
                 Err(err) => {
-                    debug!("BlueZ agent not available: {err}");
+                    let attempt = PIN_AGENT_FAIL_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                    if attempt <= 3 || attempt % 30 == 0 {
+                        warn!("BlueZ agent not available (attempt {attempt}, retry in 2s): {err}");
+                    } else {
+                        debug!("BlueZ agent not available (attempt {attempt}): {err}");
+                    }
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
             }

@@ -1,6 +1,9 @@
 use std::{
     fs, io,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -19,6 +22,12 @@ use log::{debug, error, info, trace, warn};
 use macaddr::MacAddr6;
 
 use crate::{CarPlayServerSession, CarPlaySessionIdentity};
+
+/// Rate-limits warn-level reports from the StartingBluetoothPower retry loop.
+static BT_POWER_FAIL_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Rate-limits warn-level reports from the WaitingForBluetooth (query_mac) retry loop.
+static BT_QUERY_FAIL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// CarPlay HeadUnit (Wireless)
 pub struct CarPlayWirelessGadget<T: AirPlayReceiverSink> {
@@ -226,6 +235,13 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
     }
 
     pub fn set_invites_blocked(&mut self, blocked: bool) {
+        if self.invites_blocked != blocked {
+            if blocked {
+                info!("iPhone invites blocked (no active car session)");
+            } else {
+                info!("iPhone invites enabled (car session active)");
+            }
+        }
         self.invites_blocked = blocked;
     }
 }
@@ -319,13 +335,23 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
             LocalState::WaitingForBluetooth { hci } => {
                 let mac = match BluetoothManager::query_mac(hci).await {
                     Err(err) => {
-                        trace!("BlueZ is down: {err:?}");
+                        // Polled ~every 500ms; warn early and periodically so a
+                        // BlueZ that never comes up is visible in the log.
+                        let attempt = BT_QUERY_FAIL_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                        if attempt <= 5 || attempt % 60 == 0 {
+                            warn!("BlueZ not reachable on {hci} (attempt {attempt}): {err:?}");
+                        } else {
+                            trace!("BlueZ is down: {err:?}");
+                        }
                         return LocalState::WaitingForBluetooth { hci: hci.into() }.into();
                     }
-                    Ok(v) => v,
+                    Ok(v) => {
+                        BT_QUERY_FAIL_COUNT.store(0, Ordering::Relaxed);
+                        v
+                    }
                 };
 
-                debug!("Discovered Bluetooth MAC: {mac}");
+                info!("Discovered Bluetooth MAC {mac} on {hci}");
                 LocalState::StartingBluetooth { hci: hci.clone(), mac }.into()
             }
             LocalState::StartingBluetooth { hci, mac } => {
@@ -363,7 +389,15 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
                 // this isn't strictly necessary, but reduces chances of a race where iOS caches SDP profiles without iAP2
 
                 if let Err(err) = BluetoothManager::start_power(hci, &self.name).await {
-                    debug!("Could not power-up Bluetooth: {err:?}");
+                    let attempt = BT_POWER_FAIL_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                    // This state is re-polled ~every 500ms; warn only on early
+                    // failures and periodically, so a persistent failure stays
+                    // visible in catplay.log without flooding the 128K log.
+                    if attempt <= 5 || attempt % 60 == 0 {
+                        warn!("Could not power-up Bluetooth on {hci} (attempt {attempt}): {err}");
+                    } else {
+                        debug!("Could not power-up Bluetooth on {hci} (attempt {attempt}): {err}");
+                    }
 
                     // Repeated Powered = true attempts also automate unglitching process of some Realtek chips
                     return LocalState::StartingBluetoothPower {
@@ -372,6 +406,8 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
                     }
                     .into();
                 }
+                BT_POWER_FAIL_COUNT.store(0, Ordering::Relaxed);
+                info!("Bluetooth {hci} powered on (alias: {})", self.name);
 
                 LocalState::WaitingForInterface { iface: self.iface.clone() }.into()
             }
