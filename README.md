@@ -30,12 +30,23 @@ CatPlay ships with a custom, heavily customized Yocto-based firmware.
 The main CatPlay firmware port is the Carlinkit Mini Ultra (Ingenic X1600EN/AIC8800D80) port.  
 As a result of heavy R&D, from the first public release it already offers unmatched levels of performance, stability and boot time.  
 
-A port for legacy Carlinkit 3.0/4.0/5.0 dongles (IMX6ULL) exists, but is being sunset as a low priority port.
-
 ## Quick start
-- grab your Carlinkit Mini Ultra dongle
-- grab latest firmware release from [here](https://github.com/catplay-labs/catplay/releases/latest/download/clk-mini-ultra-nor.zip)
-- see flashing tutorial [here](https://github.com/catplay-labs/catplay-firmware/blob/master/docs/Carlinkit%20Mini%20Ultra.md)
+
+| Port Status | Marketing ID | SoC | Radio | Vendor ID | Bundle | Flashing tut |
+|-------------|--------------|-----|-------|-----------|--------|--------------|
+| ✅ Stable | Carlinkit Mini Ultra 1<br>Wooboobox M5<br>Wooboobox M6<br>Wooboobox M11 | Ingenic X1600 | AIC8800D80 | AX1800M | [clk-mini-ultra-nor.zip](https://github.com/catplay-labs/catplay/releases/latest/download/clk-mini-ultra-nor.zip) | [Carlinkit Mini Ultra.md](https://github.com/catplay-labs/catplay-firmware/blob/master/docs/Carlinkit%20Mini%20Ultra.md) |
+| ✅ Stable | Carlinkit Mini Ultra 1<br>Wooboobox B12<br>EKIY EC03 | Allwinner V821B | RTL8733BS | ly5190<br>ly5166<br>ly5101 | [v821b-rtl8733bs.zip](https://github.com/catplay-labs/catplay/releases/latest/download/v821b-rtl8733bs.zip) | [V821B.md](https://github.com/catplay-labs/catplay-firmware/blob/master/docs/V821B.md) |
+| 🛠️ In progress | Carlinkit Mini Ultra 3<br>Carlinkit CCPA-2CAir | Allwinner V821B | AIC8800D80 | - | - | - |
+| 🛠️ In progress | Carlinkit Mini Ultra 1 | Anyka AN3918AV130 | AIC8800D80 | - | - | - |
+| 🛠️ In progress | Wooboobox T2 | Allwinner V851S | AIC8800D80 | - | - | - |
+| ⏳ Port in queue | Carlinkit 3.0/4.0/5.0 | IMX6ULL | - | - | - | - |
+| ⏳ Port in queue | Carlinkit CCPA-2CAir | Axera AX520 | AIC8800D80 | - | - | - |
+
+Not sure which to flash?  
+Future releases will ship a script which can ID your dongle.    
+For now, you can just try both stable releases and rest assured that the process protects against bricking incompatible dongles - it just won't progress.  
+If neither of them works, you're likely on the incompatible side right now.
+
 ## Car compatibility
 
 Some incompatibilities with different cars are expected at this stage (resulting in no detection of the dongle).  
