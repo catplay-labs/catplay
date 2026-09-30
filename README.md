@@ -35,7 +35,7 @@ As a result of heavy R&D, from the first public release it already offers unmatc
 | Port Status | Marketing ID | SoC | Radio | Vendor ID | Bundle | Flashing tut |
 |-------------|--------------|-----|-------|-----------|--------|--------------|
 | ✅ Stable | Carlinkit Mini Ultra 1<br>Wooboobox M5<br>Wooboobox M6<br>Wooboobox M11 | Ingenic X1600 | AIC8800D80 | AX1800M | [clk-mini-ultra-nor.zip](https://github.com/catplay-labs/catplay/releases/latest/download/clk-mini-ultra-nor.zip) | [Carlinkit Mini Ultra.md](https://github.com/catplay-labs/catplay-firmware/blob/master/docs/Carlinkit%20Mini%20Ultra.md) |
-| ✅ Stable | Carlinkit Mini Ultra 1<br>Wooboobox B12<br>EKIY EC03 | Allwinner V821B | RTL8733BS | ly5190<br>ly5166<br>ly5101 | [v821b-rtl8733bs.zip](https://github.com/catplay-labs/catplay/releases/latest/download/v821b-rtl8733bs.zip) | [V821B.md](https://github.com/catplay-labs/catplay-firmware/blob/master/docs/V821B.md) |
+| ✅ Stable | Carlinkit Mini Ultra 1<br>Wooboobox B12<br>EKIY EC03 | Allwinner V821B | RTL8733BS | ly5190<br>ly5166<br>ly5101 | [v821b-rtl8733bs.zip](https://github.com/catplay-labs/catplay/releases/latest/download/v821b-rtl8733bs.zip) | [V821.md](https://github.com/catplay-labs/catplay-firmware/blob/master/docs/V821.md) |
 | 🛠️ In progress | Carlinkit Mini Ultra 3<br>Carlinkit CCPA-2CAir | Allwinner V821B | AIC8800D80 | - | - | - |
 | 🛠️ In progress | Carlinkit Mini Ultra 1 | Anyka AN3918AV130 | AIC8800D80 | - | - | - |
 | 🛠️ In progress | Wooboobox T2 | Allwinner V851S | AIC8800D80 | - | - | - |
