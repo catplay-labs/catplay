@@ -7,6 +7,7 @@ edition = "2024"
 catplay_tracing = { path = "../catplay_tracing", optional = true }
 catplay_util = { path = "../catplay_util" }
 catplay_csm = { path = "../catplay_csm", optional = true }
+catplay_lingo = { path = "../catplay_lingo", optional = true }
 
 bitflags = "2.10.0"
 bytes = "1.10.1"
@@ -17,8 +18,10 @@ libc = { version = "0.2.180", optional = true }
 [features]
 std = []
 csm_parser = ["dep:catplay_csm"]
+lingo_parser = ["lingo"]
 tracing = ["std", "dep:catplay_tracing"]
-default = ["std", "csm_parser", "tracing"]
+lingo = ["dep:catplay_lingo"]
+default = ["std", "csm_parser", "tracing", "lingo", "lingo_parser"]
 
 [dev-dependencies]
 ctor = "0.6.0"

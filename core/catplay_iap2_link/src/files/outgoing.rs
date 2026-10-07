@@ -304,6 +304,7 @@ impl FileTransferTransmitter {
 
         false
     }
+
     pub fn poll(&mut self, chunk_size: usize) -> Option<FileTransferPayload> {
         for slot in self.outgoing.iter_mut().flatten() {
             if slot.state == FileTransferState::Sending

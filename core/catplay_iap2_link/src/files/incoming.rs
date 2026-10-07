@@ -80,10 +80,8 @@ impl FileTransferReceiver {
                     return (None, None);
                 };
 
-                notify_local.replace(FileTransferEvent::Data {
-                    data: data.clone(),
-                    is_final_chunk,
-                });
+                let data_len = data.len();
+                notify_local.replace(FileTransferEvent::Data { data, is_final_chunk });
 
                 if is_final_chunk {
                     let notification = FileTransferPayload {
@@ -97,7 +95,7 @@ impl FileTransferReceiver {
                 } else {
                     Some(FileTransferStatus {
                         file_id,
-                        progress: old_status.progress + data.len(),
+                        progress: old_status.progress + data_len,
                         total: old_status.total,
                         state: FileTransferState::Sending,
                     })

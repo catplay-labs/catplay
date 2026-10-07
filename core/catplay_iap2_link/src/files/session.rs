@@ -51,35 +51,8 @@ impl FileSession {
     pub fn enqueue_test_payload(&mut self, payload: FileTransferPayload) {
         self.queue_tx.push_back(payload);
     }
-}
 
-impl LinkSession for FileSession {
-    fn dequeue_tx(&mut self, max_payload_len: usize) -> Option<Vec<u8>> {
-        if let Some(v) = self.queue_tx.pop_front().map(|i| {
-            debug!("Local TX/RX file response: {i:?} [server={}]", self.server);
-            let mut v = Vec::new();
-            i.to_bytes(&mut v);
-            v
-        }) {
-            return Some(v);
-        }
-
-        let chunk_size = max_payload_len.saturating_sub(FileTransferPayload::HEADER_OVERHEAD);
-        if chunk_size == 0 {
-            return None;
-        }
-
-        if let Some(tx) = self.tx.poll(chunk_size) {
-            debug!("Local TX file response #2: {tx:?} [server={}]", self.server);
-            let mut buf = Vec::new();
-            tx.to_bytes(&mut buf);
-            return Some(buf);
-        }
-
-        None
-    }
-
-    fn enqueue_rx(&mut self, packet: &Packet) {
+    pub fn enqueue_rx(&mut self, packet: &Packet) {
         let f = FileTransferPayload::from_packet(packet);
         let Some(f) = f else {
             debug!("Ignoring invalid FileTransferPayload");
@@ -119,6 +92,33 @@ impl LinkSession for FileSession {
                 self.local_events.push_back((file_id, local));
             }
         }
+    }
+}
+
+impl LinkSession for FileSession {
+    fn dequeue_tx(&mut self, max_payload_len: usize) -> Option<Vec<u8>> {
+        if let Some(v) = self.queue_tx.pop_front().map(|i| {
+            debug!("Local TX/RX file response: {i:?} [server={}]", self.server);
+            let mut v = Vec::new();
+            i.to_bytes(&mut v);
+            v
+        }) {
+            return Some(v);
+        }
+
+        let chunk_size = max_payload_len.saturating_sub(FileTransferPayload::HEADER_OVERHEAD);
+        if chunk_size == 0 {
+            return None;
+        }
+
+        if let Some(tx) = self.tx.poll(chunk_size) {
+            debug!("Local TX file response #2: {tx:?} [server={}]", self.server);
+            let mut buf = Vec::new();
+            tx.to_bytes(&mut buf);
+            return Some(buf);
+        }
+
+        None
     }
 
     fn has_tx_pending(&self) -> bool {

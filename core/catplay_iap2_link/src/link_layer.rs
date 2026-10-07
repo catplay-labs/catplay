@@ -4,7 +4,6 @@ use core::{cmp::Ordering, time::Duration};
 use log::{debug, trace};
 
 #[cfg(test)]
-#[path = "link_layer_test.rs"]
 mod tests;
 
 use crate::{
@@ -23,6 +22,12 @@ pub enum LinkStatus {
     Unwritable,
     Recovery,
 
+    /// iAP1 mode active.
+    ///
+    /// We either _pretend_ to only understand iAP1 (to test iAP1 interactions with the remote)
+    /// or we already observed an iAP1 packet and should disable iAP2 functionalities.
+    Downgrade,
+
     Error(LinkError),
 }
 
@@ -32,8 +37,24 @@ pub enum LinkError {
     RetransmissionsExceeded,
     LinkNegotiationRoundsExceeded,
     Eof,
-    RecvMaxLenViolation { received: usize, limit: usize },
-    TransmitMaxLenViolation { transmitting: usize, limit: usize },
+    RecvMaxLenViolation {
+        received: usize,
+        limit: usize,
+    },
+    TransmitMaxLenViolation {
+        transmitting: usize,
+        limit: usize,
+    },
+
+    /// Remote started talking iAP2 after talking iAP1.
+    RemoteAttemptedUpgrade,
+    /// Attempted to send an iAP2-only frame after the link was already determined as iAP1.
+    AttemptedUpgrade,
+
+    /// Remote started talking iAP1 after talking iAP2.
+    RemoteAttemptedDowngrade,
+    /// Attempted to send an iAP1-only frame after the link was already determined as iAP2.
+    AttemptedDowngrade,
 }
 
 /// Represents instructions that should be processed by external transport(socket) layer
@@ -42,6 +63,9 @@ pub enum LinkError {
 pub enum LinkEvent {
     /// A new CSM message was decoded.
     ReadCsm(Vec<u8>),
+    /// Raw iAP1 frame body, for interpretation by the session owner.
+    #[cfg(feature = "lingo")]
+    ReadLegacy(Vec<u8>),
     /// A packet should be forwarded to transport.
     Write(PacketOrDetect),
     /// Status has changed.
@@ -82,6 +106,8 @@ pub struct LinkLayer {
     files: FileSession,
     csm: PayloadSession,
     ea: PayloadSession,
+    // Lingo payloads - iAP1 only
+    lingo: PayloadSession,
 
     pending_ack: PendingAck,
 
@@ -156,6 +182,10 @@ impl LinkLayer {
         &mut self.csm
     }
 
+    pub fn lingo(&mut self) -> &mut PayloadSession {
+        &mut self.lingo
+    }
+
     pub fn status(&self) -> &LinkStatus {
         &self.status
     }
@@ -196,6 +226,10 @@ impl LinkLayer {
         self.status = state;
         (self.callback)(LinkEvent::Status(state));
         debug!(target: self.logger, "Changing state to {state:?}");
+    }
+
+    fn enter_error_state(&mut self, error: LinkError) {
+        self.change_state(LinkStatus::Error(error));
     }
 
     fn refresh_data_status(&mut self) {
@@ -256,11 +290,13 @@ impl LinkLayer {
             files: FileSession::new(server),
             ea: PayloadSession::new(),
             csm: PayloadSession::new(),
+            lingo: PayloadSession::new(),
+
             pending_ack: PendingAck::default(),
             #[cfg(feature = "tracing")]
             tracer: catplay_tracing::tracer::SessionTracer::new("iap2_trace"),
         };
-        me.reconcile();
+        me.reconcile(0);
         me
     }
 
@@ -377,14 +413,13 @@ impl LinkLayer {
         if entry.retry_count >= lsp.max_retransmissions {
             debug!("Packet {:?} exceeded max retransmissions, closing", seq);
             // TODO: iPhone would send a RST here instead
-            self.change_state(LinkStatus::Error(LinkError::RetransmissionsExceeded));
+            self.enter_error_state(LinkError::RetransmissionsExceeded);
             return None;
         }
 
         // Special case - we don't care about initialized peer_seq, if we are retransmitting a SYN packet.
         if !entry.packet.header.control.is_syn() {
-            let peer_seq = self.peer_seq?;
-            entry.packet.header.ack = peer_seq;
+            entry.packet.header.ack = self.peer_seq?;
         }
         debug!(
             target: self.logger,
@@ -420,40 +455,51 @@ impl LinkLayer {
         }
     }
 
-    /// Reconcile incoming data into [LinkEvent]s and transmit all pending outgoing packets without any limit.
-    pub fn reconcile_all(&mut self) {
-        self.reconcile();
-        self.transmit_all();
-    }
-
-    /// Reconcile incoming data into [LinkEvent]s.
-    pub fn reconcile(&mut self) {
+    /// Reconcile state and emit at most `tx_budget` outgoing frames as [LinkEvent::Write].
+    /// Returns `true` if the budget was exhausted and another call _may_ transmit more.
+    /// A zero budget processes state without transmitting.
+    pub fn reconcile(&mut self, tx_budget: usize) -> bool {
         self.drain_events();
-    }
-
-    /// Transmit all pending outgoing packets in form of [LinkEvent::Write].
-    pub fn transmit_all(&mut self) {
-        while let Some(next) = self.next_transmit() {
+        for _ in 0..tx_budget {
+            let Some(next) = self.next_transmit() else {
+                return false;
+            };
             self.send_event(LinkEvent::Write(next));
             self.refresh_data_status();
         }
-    }
-
-    /// Transmit one outgoing packet in form of [LinkEvent::Write], if any, by internal priority.
-    ///
-    /// The goal of this API is to allow easy backpressure management in line with the transport.
-    pub fn transmit_once(&mut self) -> bool {
-        if let Some(next) = self.next_transmit() {
-            self.send_event(LinkEvent::Write(next));
-            self.refresh_data_status();
-            true
-        } else {
-            false
-        }
+        true
     }
 
     fn next_transmit(&mut self) -> Option<PacketOrDetect> {
-        // Decide a single next frame to transmit by priority
+        // For iAP1 mode:
+        // - never attempt to send any iAP2 frames
+        // - only 1:1 forward scheduled Lingo messages since iAP1
+        // has no concept of retransmissions or link negotiation
+        // - attempt to detect when user is trying to mix iAP1 and iAP2 activities
+        // with a hard error
+
+        if self.is_error() {
+            return None;
+        }
+
+        if let Some(lingo) = self.lingo.dequeue_tx(usize::MAX) {
+            if !self.is_downgrade() {
+                self.enter_error_state(LinkError::AttemptedDowngrade);
+                return None;
+            } else {
+                return Some(PacketOrDetect::Legacy(lingo));
+            }
+        }
+
+        if self.is_downgrade() {
+            // Check if iAP2 frames were mistakenly scheduled and report error.
+            if let Some(_) = self.next_payload() {
+                self.enter_error_state(LinkError::AttemptedUpgrade);
+            }
+            return None;
+        }
+
+        // Decide a single next iAP2 frame to transmit by priority
         // 0) Acknowledge peer detect
         // 1) Retransmit DETECT
         // 2) Pending negotiation response + SYN retransmissions
@@ -485,6 +531,9 @@ impl LinkLayer {
                 return Some(PacketOrDetect::Detect);
             }
 
+            // Note: here could possibly live a downgrade-to-iAP1-after-timeout mechanism.
+            // But it would be prone to false positives if Apple device is busy.
+            // Instead, the downgrade status is pre-determined during LinkLayer creation.
             return None;
         }
 
@@ -542,10 +591,10 @@ impl LinkLayer {
 
             if packet.size() > self.peer_lsp.max_len as _ {
                 // Either an optimistically scheduled CSM/EA packet that violates peer's limit, or an improperly scheduled file transfer payload.
-                self.change_state(LinkStatus::Error(LinkError::TransmitMaxLenViolation {
+                self.enter_error_state(LinkError::TransmitMaxLenViolation {
                     transmitting: packet.size(),
                     limit: self.peer_lsp.max_len as _,
-                }));
+                });
                 return None;
             }
             let next = self.prepare_ackable(packet);
@@ -635,7 +684,7 @@ impl LinkLayer {
                 debug!("Countering with LSP: {counter:?}");
                 // Unacceptable, send the counter embedded in SYN+ACK and continue negotiation
                 if self.negotiation.increment_counter() >= 10 {
-                    self.change_state(LinkStatus::Error(LinkError::LinkNegotiationRoundsExceeded));
+                    self.enter_error_state(LinkError::LinkNegotiationRoundsExceeded);
                     return;
                 }
 
@@ -706,7 +755,7 @@ impl LinkLayer {
             debug!("Countering with LSP: {counter:?}");
             // Unacceptable, send a counter embedded in SYN+ACK and continue negotation
             if self.negotiation.increment_counter() >= 10 {
-                self.change_state(LinkStatus::Error(LinkError::LinkNegotiationRoundsExceeded));
+                self.enter_error_state(LinkError::LinkNegotiationRoundsExceeded);
                 return;
             }
 
@@ -724,7 +773,7 @@ impl LinkLayer {
 
     fn on_recv_neg(&mut self, packet: &Packet) {
         let ctl = &packet.header.control;
-        let header = &packet.header;
+        let _header = &packet.header;
         // Don't enforce SID=0 here; cars violating this spotted in the wild
         if self.status != LinkStatus::Negotiating
         /*|| header.session_id != LSPPayload::SESSION_ID_CONTROL*/
@@ -741,7 +790,7 @@ impl LinkLayer {
 
     pub fn close(&mut self) {
         if self.status != LinkStatus::Error(LinkError::Eof) {
-            self.change_state(LinkStatus::Error(LinkError::Eof));
+            self.enter_error_state(LinkError::Eof);
         }
     }
 
@@ -760,7 +809,6 @@ impl LinkLayer {
         match session.session_type {
             SessionType::ExternalAccessory => {
                 debug!("Don't know what to do with EA payload: {:?}", packet.payload);
-                self.ea.enqueue_rx(packet);
             }
             SessionType::Control => {
                 let Some(payload) = &packet.payload else { return };
@@ -775,7 +823,7 @@ impl LinkLayer {
                     payload.len()
                 );
 
-                self.csm.enqueue_rx(packet);
+                self.send_event(LinkEvent::ReadCsm(payload.clone()));
             }
             SessionType::FileTransfer => {
                 self.files.enqueue_rx(packet);
@@ -789,34 +837,76 @@ impl LinkLayer {
         while let Some(ev) = self.files.dequeue_local_event() {
             self.send_event(LinkEvent::FileTransfer(ev.0, ev.1));
         }
+    }
 
-        while let Some(csm) = self.csm.dequeue_rx() {
-            self.send_event(LinkEvent::ReadCsm(csm));
-        }
+    pub fn is_downgrade(&self) -> bool {
+        matches!(self.status, LinkStatus::Downgrade)
+    }
 
-        while let Some(_ea) = self.ea.dequeue_rx() {
-            // self.send_event(LinkEvent::ReadCsm(csm));
-        }
+    pub fn is_error(&self) -> bool {
+        matches!(self.status, LinkStatus::Error(_))
     }
 
     pub fn read(&mut self, packet: PacketOrDetect) {
-        if matches!(self.status, LinkStatus::Error(_)) {
+        if self.is_error() {
             debug!("Ignored packet in error state");
             return;
         }
 
         self.trace_packet(false, &packet);
 
-        let PacketOrDetect::Packet(packet) = packet else {
-            if self.server {
-                self.pending_ack.needs_detect_acknowledge = true;
-                self.reconcile();
-            } else if self.status == LinkStatus::Detecting {
-                self.change_state(LinkStatus::Negotiating);
-            }
+        let packet = match packet {
+            PacketOrDetect::Detect => {
+                if self.is_downgrade() {
+                    // "Detect" is strictly an iAP2 sequence that should not be allowed
+                    // within iAP1 sessions.
+                    self.enter_error_state(LinkError::RemoteAttemptedUpgrade);
+                    return;
+                }
 
-            return;
+                if self.server {
+                    self.pending_ack.needs_detect_acknowledge = true;
+                    self.reconcile(0);
+                } else if self.status == LinkStatus::Detecting {
+                    self.change_state(LinkStatus::Negotiating);
+                }
+                return;
+            }
+            #[cfg(feature = "lingo")]
+            PacketOrDetect::Legacy(body) => {
+                // In iPhone role it is safe to automatically perform the downgrade
+                // when first iAP1 frame is observed
+
+                if self.server && !self.is_downgrade() {
+                    match self.downgrade() {
+                        Ok(()) => {
+                            debug!("Automatically downgrading to iAP1 because remote sent iAP1 frame");
+                        }
+                        Err(err) => {
+                            // This should never happen.
+                            debug!("Failed to perform session downgrade? {err:?}");
+                            self.enter_error_state(LinkError::RemoteAttemptedDowngrade);
+                            return;
+                        }
+                    }
+                }
+                if !self.is_downgrade() {
+                    // Disallow within iAP2 sessions.
+                    self.enter_error_state(LinkError::RemoteAttemptedDowngrade);
+                    return;
+                }
+
+                self.send_event(LinkEvent::ReadLegacy(body));
+                return;
+            }
+            PacketOrDetect::Packet(packet) => packet,
         };
+
+        if self.is_downgrade() {
+            // If we reached here, this is strictly an iAP2-only packet.
+            self.enter_error_state(LinkError::RemoteAttemptedUpgrade);
+            return;
+        }
 
         if packet.size() > self.local_lsp.max_len as _ {
             debug!(
@@ -825,10 +915,10 @@ impl LinkLayer {
                 packet.size(),
                 self.local_lsp.max_len
             );
-            self.change_state(LinkStatus::Error(LinkError::RecvMaxLenViolation {
+            self.enter_error_state(LinkError::RecvMaxLenViolation {
                 received: packet.size(),
                 limit: self.local_lsp.max_len as _,
-            }));
+            });
             return;
         } else {
             trace!(target: self.logger, "Received packet sized {} vs limit {}", packet.size(), self.local_lsp.max_len);
@@ -840,7 +930,7 @@ impl LinkLayer {
 
         let ctl = &packet.header.control;
         if !self.server && ctl.is_rst() {
-            self.change_state(LinkStatus::Error(LinkError::Reset));
+            self.enter_error_state(LinkError::Reset);
             return;
         }
 
@@ -899,7 +989,7 @@ impl LinkLayer {
             self.eak.begin_recovery(&payload.psns);
             self.refresh_data_status();
 
-            // Recovery-mode retransmission is now scheduled through transmit_once().
+            // Recovery-mode retransmission is scheduled through reconcile().
         }
 
         let Some(peer_seq) = self.peer_seq else {
@@ -945,7 +1035,7 @@ impl LinkLayer {
     pub fn sleep(&self) -> Option<Duration> {
         let now = self.clock.now();
 
-        if let LinkStatus::Error(_) = self.status {
+        if self.is_error() {
             trace!("Sleep not required in error state");
             return None;
         }
@@ -975,5 +1065,28 @@ impl LinkLayer {
         let ret = nearest_deadline.map(|deadline| deadline.saturating_duration_since(now));
         trace!("Sleep post-neg for {ret:?}");
         ret
+    }
+
+    /// Downgrade to iAP1 when used in accessory role.
+    ///
+    /// Only possible early before any outgoing packets are scheduled.
+    ///
+    /// For iPhone role, this process is performed automatically based on first received packet.
+    pub fn downgrade(&mut self) -> Result<(), LinkError> {
+        match self.status {
+            LinkStatus::Detecting | LinkStatus::Downgrade => {}
+            LinkStatus::Error(_) => return Err(LinkError::Eof),
+            _ => return Err(LinkError::AttemptedDowngrade),
+        }
+
+        // If we already sent first DETECT and are waiting for response
+        // the status could still be LinkStatus::Detecting
+        if self.detect_last_transmit.is_some() {
+            return Err(LinkError::AttemptedDowngrade);
+        }
+
+        self.change_state(LinkStatus::Downgrade);
+        debug!("Successfully downgraded link to iAP1");
+        Ok(())
     }
 }

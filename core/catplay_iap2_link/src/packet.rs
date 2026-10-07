@@ -1,8 +1,4 @@
-use alloc::{
-    format,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::vec::Vec;
 use catplay_util::{ModSeq, ModSeq8};
 
 use crate::{FileTransferPayload, PayloadDecodable};
@@ -64,8 +60,12 @@ impl<T: AsRef<[u8]>> AsRef<[u8]> for PacketFrame<T> {
 
 #[derive(PartialEq, Clone)]
 pub enum PacketOrDetect {
+    /// iAP2 detection sequence
     Detect,
+    /// iAP2 packet
     Packet(Packet),
+    /// iAP1 legacy (Lingo) packet
+    Legacy(Vec<u8>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -80,6 +80,14 @@ impl fmt::Display for PacketOrDetect {
         match self {
             PacketOrDetect::Detect => f.write_str("DETECT"),
             PacketOrDetect::Packet(packet) => packet.fmt(f),
+            #[cfg(feature = "lingo")]
+            PacketOrDetect::Legacy(body) => {
+                #[cfg(feature = "lingo_parser")]
+                if let Ok(packet) = catplay_lingo::Packet::decode(&catplay_lingo::Frame { body }) {
+                    return write!(f, "LEGACY {packet:?}");
+                }
+                write!(f, "LEGACY {body:02x?}")
+            }
         }
     }
 }
@@ -89,6 +97,14 @@ impl fmt::Debug for PacketOrDetect {
         match self {
             PacketOrDetect::Detect => f.write_str("DETECT"),
             PacketOrDetect::Packet(packet) => packet.fmt(f),
+            #[cfg(feature = "lingo")]
+            PacketOrDetect::Legacy(body) => {
+                #[cfg(feature = "lingo_parser")]
+                if let Ok(packet) = catplay_lingo::Packet::decode(&catplay_lingo::Frame { body }) {
+                    return write!(f, "LEGACY {packet:?}");
+                }
+                write!(f, "LEGACY {body:02x?}")
+            }
         }
     }
 }
@@ -195,25 +211,34 @@ impl Packet {
 
 impl fmt::Display for Packet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut payload_hex: String = "".into();
+        write!(
+            f,
+            "[LEN {} CTL ({}) SEQ {} ACK {} SID {}]\n",
+            self.header.length,
+            self.header.control.to_str(),
+            self.header.seq.value(),
+            self.header.ack.value(),
+            self.header.session_id,
+        )?;
+
         if let Some(payload) = &self.payload {
             for chunk in payload.chunks(8) {
-                payload_hex += "    [";
+                f.write_str("    [")?;
                 for byte in chunk {
-                    payload_hex += &format!("{:02X} ", byte);
+                    write!(f, "{byte:02X} ")?;
                 }
-                payload_hex += "]\n";
+                f.write_str("]\n")?;
             }
         }
 
         if (self.header.control.is_syn() || self.header.control.is_ack())
             && let Some(lsp) = LSPPayload::from_packet(self)
         {
-            payload_hex += &format!("    {lsp:?}\n");
-        } else if let Some(f) = FileTransferPayload::from_packet(self)
+            writeln!(f, "    {lsp:?}")?;
+        } else if let Some(file_transfer) = FileTransferPayload::from_packet(self)
             && self.header.session_id == 2
         {
-            payload_hex += &format!("    {f:?} [assumed FileTransferPayload]\n");
+            writeln!(f, "    {file_transfer:?} [assumed FileTransferPayload]")?;
         } else {
             #[cfg(feature = "csm_parser")]
             {
@@ -221,24 +246,10 @@ impl fmt::Display for Packet {
                 if let Some(payload) = &self.payload
                     && let Some(p) = registry.decode(payload)
                 {
-                    payload_hex += &format!("    {p:?}\n");
+                    writeln!(f, "    {p:?}")?;
                 }
             }
         }
-
-        write!(
-            f,
-            "[LEN {} CTL ({}) SEQ {} ACK {} SID {}]\n{}",
-            self.header.length,
-            self.header.control.to_str(),
-            self.header.seq.value(),
-            self.header.ack.value(),
-            self.header.session_id,
-            match &self.payload {
-                None => "".to_string(),
-                Some(_) => payload_hex.to_string(),
-            }
-        )?;
         Ok(())
     }
 }

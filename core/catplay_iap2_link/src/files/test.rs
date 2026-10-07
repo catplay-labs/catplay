@@ -50,8 +50,8 @@ impl LinkLayerFileTest {
 
     fn sync(&mut self) {
         for _ in 0..20 {
-            self.client.reconcile();
-            self.server.reconcile();
+            self.client.reconcile(usize::MAX);
+            self.server.reconcile(usize::MAX);
             self.drain_client_events();
             self.drain_server_events();
         }

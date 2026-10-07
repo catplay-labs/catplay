@@ -1,109 +1,19 @@
+mod downgrade;
+mod shared;
+
+use self::shared::ClientsDuplexTest;
+
 use catplay_tracing::logger::setup_test_logger;
 use catplay_util::ModSeq;
 use log::debug;
 
-use crate::{LSPPayload, LinkError, LinkEvent, LinkLayer, LinkStatus, Packet, PacketOrDetect, clock::MockClock};
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
+use crate::{LSPPayload, LinkError, LinkEvent, LinkStatus, Packet, PacketOrDetect};
+use std::time::Duration;
 
 #[cfg(test)]
 #[ctor::ctor]
 pub fn init_logger() {
     setup_test_logger(true);
-}
-
-struct ClientsDuplexTest {
-    client_queue: Arc<Mutex<VecDeque<LinkEvent>>>,
-    server_queue: Arc<Mutex<VecDeque<LinkEvent>>>,
-    pub client: LinkLayer,
-    pub server: LinkLayer,
-    pub client_recv: VecDeque<Vec<u8>>,
-    pub server_recv: VecDeque<Vec<u8>>,
-    pub clock: MockClock,
-}
-
-impl ClientsDuplexTest {
-    fn new() -> ClientsDuplexTest {
-        let client_queue: Arc<Mutex<VecDeque<LinkEvent>>> = Arc::new(Mutex::new(VecDeque::new()));
-        let server_queue: Arc<Mutex<VecDeque<LinkEvent>>> = Arc::new(Mutex::new(VecDeque::new()));
-        let client_recv = VecDeque::new();
-        let server_recv = VecDeque::new();
-
-        let client_cb = {
-            let client_queue = client_queue.clone();
-            move |ev| {
-                client_queue.lock().unwrap().push_back(ev);
-            }
-        };
-        let server_cb = {
-            let server_queue = server_queue.clone();
-            move |ev| {
-                server_queue.lock().unwrap().push_back(ev);
-            }
-        };
-
-        let clock = MockClock::new(Instant::now());
-
-        let client = LinkLayer::with_clock(false, Box::new(clock.clone()), client_cb);
-        let server = LinkLayer::with_clock(true, Box::new(clock.clone()), server_cb);
-
-        ClientsDuplexTest {
-            client_queue,
-            server_queue,
-            client,
-            server,
-            client_recv,
-            server_recv,
-            clock,
-        }
-    }
-
-    fn sync(&mut self) {
-        for _ in 0..10 {
-            self.client.reconcile_all();
-            self.server.reconcile_all();
-
-            self.sync_client_once();
-            self.sync_server_once();
-        }
-    }
-
-    fn sync_client_once(&mut self) {
-        for i in self.client_queue.lock().unwrap().drain(..) {
-            match i {
-                LinkEvent::Write(p) => self.server.read(p),
-                LinkEvent::ReadCsm(p) => self.client_recv.push_back(p),
-                _ => {}
-            }
-        }
-    }
-
-    fn sync_server_once(&mut self) {
-        for i in self.server_queue.lock().unwrap().drain(..) {
-            match i {
-                LinkEvent::Write(p) => self.client.read(p),
-                LinkEvent::ReadCsm(p) => self.server_recv.push_back(p),
-                _ => {}
-            }
-        }
-    }
-
-    fn client_lose_ops(&mut self) {
-        self.client.reconcile_all();
-        let lost = self.client_queue.lock().unwrap().drain(..).len();
-        debug!("Losing {lost} client ops!");
-        assert!(lost > 0);
-    }
-
-    fn server_lose_ops(&mut self) {
-        self.server.reconcile_all();
-        let lost = self.server_queue.lock().unwrap().drain(..).len();
-        debug!("Losing {lost} server ops!");
-        assert!(lost > 0);
-    }
 }
 
 #[test]
@@ -116,7 +26,24 @@ fn test_client_server_negotiation() {
 }
 
 #[test]
-fn test_transmit_once_sends_detect_while_detecting() {
+fn reconcile_respects_zero_and_one_frame_budgets() {
+    let mut test = ClientsDuplexTest::new();
+    test.client_queue.lock().unwrap().clear();
+
+    assert!(test.client.reconcile(0));
+    assert!(test.client_queue.lock().unwrap().is_empty());
+
+    assert!(test.client.reconcile(1));
+    assert!(matches!(
+        test.client_queue.lock().unwrap().pop_front(),
+        Some(LinkEvent::Write(PacketOrDetect::Detect))
+    ));
+    assert!(!test.client.reconcile(1));
+    assert!(test.client_queue.lock().unwrap().is_empty());
+}
+
+#[test]
+fn test_next_transmit_sends_detect_while_detecting() {
     let mut test = ClientsDuplexTest::new();
     test.client_queue.lock().unwrap().clear();
     test.clock.advance(Duration::from_secs(1));
@@ -129,7 +56,7 @@ fn test_transmit_once_sends_detect_while_detecting() {
 }
 
 #[test]
-fn test_transmit_once_sends_syn_while_negotiating() {
+fn test_next_transmit_sends_syn_while_negotiating() {
     let mut test = ClientsDuplexTest::new();
     test.client_queue.lock().unwrap().clear();
     test.client.change_state(LinkStatus::Negotiating);
@@ -180,8 +107,8 @@ fn test_long_session() {
         test.server.csm().enqueue_tx(vec![4, 3, 2, 1]);
     }
 
-    test.server.reconcile_all();
-    test.client.reconcile_all();
+    test.server.reconcile(usize::MAX);
+    test.client.reconcile(usize::MAX);
 
     assert_eq!(test.client.status(), &LinkStatus::Unwritable);
     assert_eq!(test.server.status(), &LinkStatus::Unwritable);
@@ -216,7 +143,7 @@ fn test_server_lost_detect() {
 #[test]
 fn test_client_lost_detect() {
     let mut test = ClientsDuplexTest::new();
-    test.client.reconcile_all();
+    test.client.reconcile(usize::MAX);
     test.sync_server_once();
     debug!("Stage 1");
     test.sync_client_once();
@@ -250,7 +177,7 @@ fn test_client_retransmit_timeout() {
         test.clock.advance(Duration::from_secs(2));
 
         test.sync_client_once();
-        test.client.reconcile_all();
+        test.client.reconcile(usize::MAX);
         if let LinkStatus::Error(_) = test.client.status() {
             break;
         }
@@ -275,7 +202,7 @@ fn test_server_retransmit_timeout() {
         test.clock.advance(Duration::from_secs(2));
 
         test.sync_server_once();
-        test.server.reconcile_all();
+        test.server.reconcile(usize::MAX);
         if let LinkStatus::Error(_) = test.server.status() {
             break;
         }
@@ -293,7 +220,7 @@ fn test_eak_enters_recovery_and_ack_exits() {
     test.sync();
 
     test.client.csm().enqueue_tx(vec![1, 2, 3, 4]);
-    test.client.reconcile_all();
+    test.client.reconcile(usize::MAX);
 
     assert_eq!(test.client.status(), &LinkStatus::Writable);
     assert_eq!(test.client.retransmit_map.len(), 1);
@@ -326,12 +253,12 @@ fn test_eak_enters_recovery_and_ack_exits() {
 }
 
 #[test]
-fn test_transmit_once_retransmits_missing_packet_in_recovery() {
+fn test_next_transmit_retransmits_missing_packet_in_recovery() {
     let mut test = ClientsDuplexTest::new();
     test.sync();
 
     test.client.csm().enqueue_tx(vec![1, 2, 3, 4]);
-    test.client.reconcile_all();
+    test.client.reconcile(usize::MAX);
 
     let missing_seq = *test.client.retransmit_map.keys().next().unwrap();
     test.client_queue.lock().unwrap().clear();
@@ -375,12 +302,12 @@ fn test_transmit_once_retransmits_missing_packet_in_recovery() {
 }
 
 #[test]
-fn test_transmit_once_retransmits_timed_out_packet() {
+fn test_next_transmit_retransmits_timed_out_packet() {
     let mut test = ClientsDuplexTest::new();
     test.sync();
 
     test.client.csm().enqueue_tx(vec![1, 2, 3, 4]);
-    test.client.reconcile_all();
+    test.client.reconcile(usize::MAX);
 
     let timed_out_seq = *test.client.retransmit_map.keys().next().unwrap();
     test.client_queue.lock().unwrap().clear();
