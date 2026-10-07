@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include "composite.h"
+#include "libcomposite/composite.h"
 #include "iphone_dev.h"
 #include "iphone_class.h"
 

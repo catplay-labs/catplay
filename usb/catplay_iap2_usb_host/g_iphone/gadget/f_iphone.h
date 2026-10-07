@@ -3,7 +3,7 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include "composite.h"
+#include "libcomposite/composite.h"
 #include "strings.h"
 #include "configs.h"
 #include "g_iphone.h"

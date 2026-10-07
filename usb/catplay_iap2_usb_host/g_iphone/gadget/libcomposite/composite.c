@@ -383,11 +383,11 @@ void usb_remove_function(struct usb_configuration *c, struct usb_function *f)
 
     bitmap_zero(f->endpoints, 32);
     list_del(&f->list);
-    if (f->unbind)
-        f->unbind(c, f);
-
+    /* An unbind callback may free f, so finish using it first. */
     if (f->bind_deactivated)
         usb_function_activate(f);
+    if (f->unbind)
+        f->unbind(c, f);
 }
 // EXPORT_SYMBOL_GPL(usb_remove_function);
 

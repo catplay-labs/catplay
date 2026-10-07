@@ -4,4 +4,5 @@
 *.symvers
 *.order
 *.mod.*
+/dist/
 *.mod

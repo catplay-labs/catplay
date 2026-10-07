@@ -7,7 +7,6 @@
 #include <linux/types.h>
 
 struct usb_device;
-struct usb_interface;
 struct device;
 
 struct iap2_acc_accessory {
@@ -29,7 +28,6 @@ struct iap2_acc_accessory {
 struct iap2_acc_accessory *iap2_acc_probe_accessory(void);
 void iap2_acc_put_accessory(struct iap2_acc_accessory *acc);
 bool iap2_acc_is_gone(struct iap2_acc_accessory *acc);
-int iap2_char_devnode_path(struct usb_interface *intf, char *buf, size_t size);
 struct device *iap2_acc_device_get(struct iap2_acc_accessory *acc);
 
 #endif

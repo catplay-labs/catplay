@@ -2,6 +2,7 @@
 #include "f_iphone.h"
 #include "interfaces.h"
 #include "hid.h"
+#include "iphone_hid.h"
 
 #define IPHONE_REQ_USBOOT 0x88
 #define IPHONE_REQ_GADGET 0x99
@@ -22,6 +23,7 @@ static struct g_iphone *g_iphone_from_usb_config(struct usb_configuration *f)
 static int f_iphone_bind(struct usb_configuration *c, struct usb_function *f)
 {
 	int config = c->bConfigurationValue;
+	int ret;
 	pr_debug("iPhone: binding config %u", config);
 
 	struct g_iphone *iphone_gadget = g_iphone_from_func(f);
@@ -33,8 +35,6 @@ static int f_iphone_bind(struct usb_configuration *c, struct usb_function *f)
 		pr_err("iPhone: no descriptors for config %u", config);
 		return -EINVAL;
 	}
-
-	g_iphone_set_status(iphone_gadget, Bind);
 
 	struct usb_descriptor_header **d;
 	d = iphone_descs[config];
@@ -58,15 +58,40 @@ static int f_iphone_bind(struct usb_configuration *c, struct usb_function *f)
 		}
 	}
 
-	return usb_assign_descriptors(f,
+	ret = usb_assign_descriptors(f,
 								  iphone_descs[config],
 								  iphone_descs[config],
 								  NULL, NULL);
+	if (ret)
+		return ret;
+
+	if (config == 2) {
+		struct iphone_hid *hid;
+
+		if (iphone_gadget->hid) {
+			usb_free_all_descriptors(f);
+			return -EBUSY;
+		}
+		hid = iphone_hid_bind(f, &ep5, report_2_2_bin_1,
+				      report_2_2_bin_1_len);
+		if (IS_ERR(hid)) {
+			usb_free_all_descriptors(f);
+			return PTR_ERR(hid);
+		}
+		iphone_gadget->hid = hid;
+	}
+	return 0;
 }
 
 static void f_iphone_unbind(struct usb_configuration *c, struct usb_function *f)
 {
+	struct g_iphone *g = g_iphone_from_func(f);
+
 	pr_debug("iPhone: unbind()");
+	if (c->bConfigurationValue == 2 && g->hid) {
+		iphone_hid_unbind(g->hid, -ENODEV);
+		g->hid = NULL;
+	}
 	usb_free_all_descriptors(f);
 
 	struct f_iphone *iphone_func = container_of(f, struct f_iphone, func);
@@ -75,13 +100,22 @@ static void f_iphone_unbind(struct usb_configuration *c, struct usb_function *f)
 
 static int f_iphone_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 {
+	int ret;
 	pr_info("iPhone: set_alt(intf=%u, alt=%u)", intf, alt);
 
 	struct g_iphone *iphone_gadget = g_iphone_from_func(f);
 	if (!iphone_gadget)
 		return -ENODEV;
+	if (f->config->bConfigurationValue == 2 && intf == 2) {
+		if (alt || !iphone_gadget->hid)
+			return -EINVAL;
+		ret = iphone_hid_enable(iphone_gadget->hid);
+		if (ret)
+			return ret;
+	}
 
-	g_iphone_set_status(iphone_gadget, Enabled);
+	if (!READ_ONCE(iphone_gadget->role_switch_requested))
+		g_iphone_set_status(iphone_gadget, Enabled);
 	return 0;
 }
 
@@ -92,8 +126,11 @@ static void f_iphone_disable(struct usb_function *f)
 	struct g_iphone *iphone_gadget = g_iphone_from_func(f);
 	if (!iphone_gadget)
 		return;
+	if (f->config->bConfigurationValue == 2)
+		iphone_hid_disable(iphone_gadget->hid);
 
-	g_iphone_set_status(iphone_gadget, Disabled);
+	if (!READ_ONCE(iphone_gadget->role_switch_requested))
+		g_iphone_set_status(iphone_gadget, Disabled);
 }
 
 static void f_iphone_suspend(struct usb_function *f)
@@ -104,7 +141,8 @@ static void f_iphone_suspend(struct usb_function *f)
 	if (!iphone_gadget)
 		return;
 
-	g_iphone_set_status(iphone_gadget, Suspended);
+	if (!READ_ONCE(iphone_gadget->role_switch_requested))
+		g_iphone_set_status(iphone_gadget, Suspended);
 }
 
 static void f_iphone_resume(struct usb_function *f)
@@ -115,7 +153,8 @@ static void f_iphone_resume(struct usb_function *f)
 	if (!iphone_gadget)
 		return;
 
-	g_iphone_set_status(iphone_gadget, Enabled);
+	if (!READ_ONCE(iphone_gadget->role_switch_requested))
+		g_iphone_set_status(iphone_gadget, Enabled);
 }
 
 static int ep0_send(struct usb_composite_dev *cdev, const void *src, u16 wLength, size_t real_len)
@@ -128,8 +167,7 @@ static int ep0_send(struct usb_composite_dev *cdev, const void *src, u16 wLength
 
 	memcpy(cdev->req->buf, src, len);
 	cdev->req->length = len;
-	cdev->req->zero = (len < wLength) ||
-					  (len && (len % cdev->gadget->ep0->maxpacket) == 0);
+	cdev->req->zero = len < wLength;
 	pr_info("iPhone: ep0_send -> len %zu", len);
 
 	return usb_ep_queue(cdev->gadget->ep0, cdev->req, GFP_ATOMIC);
@@ -161,29 +199,10 @@ static int f_iphone_setup(struct usb_function *f,
 	if (!iphone_gadget)
 		return -ENODEV;
 
-	/* Magic HID reports */
-	if ((ctrl->bRequestType == (USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_INTERFACE)) &&
-		(ctrl->bRequest == USB_REQ_GET_DESCRIPTOR) &&
-		(wIndex == 0x02 /* IPHONE_HID_INTF */))
-	{
-		u8 dtype = wValue >> 8;
-		// u8 dindex = wValue & 0xff;
-		switch (dtype)
-		{
-		case USB_DT_HID: /* 0x21 */
-			/*if (dindex != 0) return -EOPNOTSUPP; */
-			pr_info("iPhone: HID descriptor requested");
-			return ep0_send(cdev, hid_2_2_bin, wLength, hid_2_2_bin_len);
-
-		case USB_DT_REPORT: /* 0x22 */
-			/*if (dindex != 0) return -EOPNOTSUPP; */
-			pr_info("iPhone: HID report requested");
-			return ep0_send(cdev, report_2_2_bin_1, wLength, report_2_2_bin_1_len);
-
-		default:
-			return -EOPNOTSUPP;
-		}
-	}
+	/* iAP2 over HID */
+	if (f->config->bConfigurationValue == 2 && wIndex == 2)
+		return iphone_gadget->hid ?
+			iphone_hid_setup(iphone_gadget->hid, ctrl) : -ENODEV;
 
 	/* Vendor-specific requests (device-to-host) */
 	if ((ctrl->bRequestType & USB_TYPE_MASK) == USB_TYPE_VENDOR)
@@ -204,7 +223,7 @@ static int f_iphone_setup(struct usb_function *f,
 			if (!cdev->req || !cdev->gadget->ep0)
 				return -ENODEV;
 
-			iphone_gadget->role_switch_requested = true;
+			WRITE_ONCE(iphone_gadget->role_switch_requested, true);
 			g_iphone_set_status(iphone_gadget, RoleSwitch);
 
 			return ep0_zlp(cdev);

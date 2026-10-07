@@ -15,6 +15,7 @@
 #include <linux/usb/usbnet.h>
 
 #include "iap2_scan.h"
+#include "../iap2_usb_bulk/iap2_usb_bulk.h"
 
 #define IAP2_DRIVER_NAME "iap2_char"
 #define NCM_DRIVER_NAME "cdc_ncm"
@@ -266,7 +267,7 @@ static struct notifier_block accessory_usb_nb = {
 
 static int iap2_find_devnode(struct usb_interface *intf, char *buf, size_t size)
 {
-    return iap2_char_devnode_path(intf, buf, size);
+    return iap2_usb_bulk_devnode_path(intf, buf, size);
 }
 
 static bool driver_is_bound(struct usb_interface *intf, const char *driver_name)
@@ -891,7 +892,6 @@ static ssize_t scan_store(struct kobject *kobj,
                           size_t count)
 {
     struct iap2_acc_accessory *acc = iap2_acc_probe_accessory();
-    int ret;
 
     if (IS_ERR(acc)) {
         pr_info("iap2_acc_probe_accessory failed: %ld\n", PTR_ERR(acc));

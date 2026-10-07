@@ -1,21 +1,44 @@
-obj-m := g_iphone.o iap2_char.o iap2_scan.o
-#iap2_scan-y := iap2_scan.o
-#iap2_char-y := iap2_char.o
+obj-m := g_iphone.o iap2_char.o iap2_hid.o iap2_usb_bulk.o iap2_scan.o
 
-g_iphone-y := iphone_mod.o iphone_dev.o iphone_class.o f_iphone.o g_iphone_impl.o composite.o 
+g_iphone-y := gadget/iphone_mod.o gadget/iphone_dev.o gadget/iphone_rs.o gadget/iphone_class.o \
+	gadget/f_iphone.o gadget/g_iphone_impl.o gadget/libcomposite/composite.o gadget/iphone_hid.o
+iap2_char-y := iap2_char/iap2_char_core.o
+iap2_hid-y := iap2_hid/iap2_hid.o iap2_hid/hid_framing.o
+iap2_usb_bulk-y := iap2_usb_bulk/iap2_usb_bulk.o
+iap2_scan-y := scan/iap2_scan.o
 
-KDIR := /lib/modules/$(shell uname -r)/build
+KDIR ?= /lib/modules/$(shell uname -r)/build
 
-PWD := $(shell pwd)
+MODULE_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+DIST_DIR := $(MODULE_DIR)/dist
+
+.PHONY: all clean insmod rmmod install
 
 all:
-	$(MAKE) -C $(KDIR) M=$(PWD) modules
+	mkdir -p $(DIST_DIR)
+	@if [ -L "$(DIST_DIR)/source" ]; then unlink "$(DIST_DIR)/source"; fi
+	$(MAKE) -C $(KDIR) M=$(MODULE_DIR) MO=$(DIST_DIR) modules
 
 clean:
-	$(MAKE) -C $(KDIR) M=$(PWD) clean
+	mkdir -p $(DIST_DIR)
+	@if [ -L "$(DIST_DIR)/source" ]; then unlink "$(DIST_DIR)/source"; fi
+	$(MAKE) -C $(KDIR) M=$(MODULE_DIR) MO=$(DIST_DIR) clean
 
 insmod:
-	insmod iap2_char.ko
-	insmod iap2_scan.ko
+	insmod $(DIST_DIR)/iap2_char.ko
+	insmod $(DIST_DIR)/iap2_usb_bulk.ko
+	insmod $(DIST_DIR)/iap2_scan.ko
+	insmod $(DIST_DIR)/iap2_hid.ko
 	modprobe libcomposite
-	insmod g_iphone.ko
+	insmod $(DIST_DIR)/g_iphone.ko
+
+rmmod:
+	rmmod g_iphone
+	rmmod iap2_hid
+	rmmod iap2_scan
+	rmmod iap2_usb_bulk
+	rmmod iap2_char
+
+install: all
+	@if [ -L "$(DIST_DIR)/source" ]; then unlink "$(DIST_DIR)/source"; fi
+	$(MAKE) -C $(KDIR) M=$(MODULE_DIR) MO=$(DIST_DIR) modules_install

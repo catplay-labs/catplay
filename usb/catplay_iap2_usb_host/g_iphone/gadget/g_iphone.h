@@ -17,11 +17,14 @@ enum GadgetStatus
 	Unbind
 };
 
+struct iphone_hid;
+
 struct g_iphone
 {
 	char serial[41];
 
 	int active_config;
+	struct iphone_hid *hid;
 	bool role_switch_requested;
 	enum GadgetStatus status;
 	int (*set_otg_role)(struct g_iphone *iphone_gadget, enum usb_role role);

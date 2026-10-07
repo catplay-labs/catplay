@@ -3,17 +3,17 @@
 #include <linux/module.h>
 #include <linux/container_of.h>
 #include <linux/usb.h>
-#include <linux/fs.h>
 #include <linux/sysfs.h>
 #include <linux/kmod.h>
-#include <linux/delay.h>
 #include <linux/slab.h>
 
 #include "iphone_dev.h"
-#include "iap2_scan.h"
+#include "iphone_hid.h"
+#include "../scan/iap2_scan.h"
+#include "../iap2_char/iap2_transport.h"
 
-#define IPHONE_ROLE_SWITCH_REBIND_DEBOUNCE_MS 1000
-#define IPHONE_ROLE_SWITCH_HOST_DELAY_MS 70
+/* Host settle time plus rebind debounce; no worker sleeps during this delay. */
+#define IPHONE_ROLE_SWITCH_REBIND_DELAY_MS 2000
 #define IPHONE_RECOVERY_COMMAND "/usr/bin/carlinkit_otalib usboot"
 #define IPHONE_RECOVERY_COMMAND_GADGET "/usr/bin/carlinkit_otalib gadget"
 
@@ -25,10 +25,10 @@ static int iphone_dev_set_otg_role_internal(struct iphone_dev_data *data,
 					    enum usb_role role,
 					    bool manage_gadget_lifecycle);
 static void iphone_dev_status_notify_workfn(struct work_struct *work);
-static void iphone_dev_role_switch_rebind_workfn(struct work_struct *work);
+static void iphone_dev_role_switch_failed(struct iphone_dev_data *data);
+static void iphone_dev_maintenance_workfn(struct work_struct *work);
+static void iphone_dev_disable_runtime(struct iphone_dev_data *data);
 static void iphone_dev_recovery_workfn(struct work_struct *work);
-static const char *iphone_dev_role_switch_name(const char *gadget_name);
-static int iphone_dev_update_role_switch_name_from_gadget(struct iphone_dev_data *data);
 
 static int iphone_dev_launch_recovery_process(const char *command)
 {
@@ -69,12 +69,18 @@ static int iphone_dev_launch_recovery_process(const char *command)
 static void iphone_dev_recovery_workfn(struct work_struct *work)
 {
 	struct iphone_dev_data *data =
-		container_of(to_delayed_work(work), struct iphone_dev_data,
-			     recovery_work);
+		container_of(work, struct iphone_dev_data, recovery_work);
+	unsigned long flags;
+	const char *command;
 
-	pr_info("iPhone: processing deferred recovery request\n");
-	iphone_dev_launch_recovery_process(data->recovery_command);
-	data->recovery_work_scheduled = false;
+	spin_lock_irqsave(&data->request_lock, flags);
+	command = data->recovery_command;
+	spin_unlock_irqrestore(&data->request_lock, flags);
+	if (!READ_ONCE(data->runtime_stopped))
+		iphone_dev_launch_recovery_process(command);
+	spin_lock_irqsave(&data->request_lock, flags);
+	data->recovery_command = NULL;
+	spin_unlock_irqrestore(&data->request_lock, flags);
 }
 
 static void iphone_dev_notify_status_changed(struct g_iphone *iphone_gadget)
@@ -82,13 +88,11 @@ static void iphone_dev_notify_status_changed(struct g_iphone *iphone_gadget)
 	struct iphone_dev_data *data =
 		container_of(iphone_gadget, struct iphone_dev_data, g);
 
-	schedule_work(&data->status_notify_work);
+	queue_work(data->wq, &data->status_notify_work);
 }
 
-static void iphone_dev_status_notify_workfn(struct work_struct *work)
+static void iphone_dev_notify(struct iphone_dev_data *data)
 {
-	struct iphone_dev_data *data =
-		container_of(work, struct iphone_dev_data, status_notify_work);
 	struct device *owner_dev = READ_ONCE(data->owner_dev);
 
 	if (!owner_dev)
@@ -101,6 +105,15 @@ static void iphone_dev_status_notify_workfn(struct work_struct *work)
 	sysfs_notify(&owner_dev->kobj, NULL, "status");
 }
 
+static void iphone_dev_status_notify_workfn(struct work_struct *work)
+{
+	struct iphone_dev_data *data =
+		container_of(work, struct iphone_dev_data, status_notify_work);
+
+	if (!READ_ONCE(data->runtime_stopped))
+		iphone_dev_notify(data);
+}
+
 static void iphone_dev_remove_accessory_link_locked(struct iphone_dev_data *data)
 {
 	if (!data->owner_dev || !data->accessory_link_added)
@@ -108,6 +121,27 @@ static void iphone_dev_remove_accessory_link_locked(struct iphone_dev_data *data
 
 	sysfs_remove_link(&data->owner_dev->kobj, "iap2_accessory");
 	data->accessory_link_added = false;
+}
+
+static void iphone_dev_remove_iap2_link(struct iphone_dev_data *data)
+{
+	if (!data->iap2_link_added)
+		return;
+	sysfs_remove_link(&data->owner_dev->kobj, "iap2_devnode");
+	data->iap2_link_added = false;
+	/* The status worker may have notified before this unlink. */
+	iphone_dev_notify(data);
+}
+
+static int iphone_dev_add_iap2_link(struct iphone_dev_data *data)
+{
+	int ret;
+
+	iphone_dev_remove_iap2_link(data);
+	ret = iap2_session_link_active(data->owner_dev);
+	if (!ret)
+		data->iap2_link_added = true;
+	return ret;
 }
 
 static int iphone_dev_add_accessory_link_locked(struct iphone_dev_data *data,
@@ -134,12 +168,17 @@ static int iphone_dev_add_accessory_link_locked(struct iphone_dev_data *data,
 	return 0;
 }
 
-static int iphone_dev_unbind_gadget(struct iphone_dev_data *data)
+static int iphone_dev_unbind_gadget(struct iphone_dev_data *data, int reason)
 {
 	if (!data->driver_registered)
 		return 0;
 
 	pr_info("iPhone: unregistering gadget\n");
+	iphone_dev_remove_iap2_link(data);
+	/* Latch the reason before disabling endpoints can complete IO with ESHUTDOWN.
+	 * Function unbind joins the queued stop before freeing backend resources.
+	 */
+	iphone_hid_close(data->g.hid, reason);
 	usb_composite_unregister(&data->driver->drv);
 	data->driver_registered = false;
 	if (data->gadget_registered) {
@@ -172,68 +211,68 @@ static int iphone_dev_bind_gadget(struct iphone_dev_data *data)
 		return ret;
 	}
 	data->driver_registered = true;
+	ret = iphone_dev_add_iap2_link(data);
+	if (ret) {
+		iphone_dev_unbind_gadget(data, -ENODEV);
+		return ret;
+	}
+	/* Setup may already have requested a role switch during probe. */
+	if (!READ_ONCE(data->g.role_switch_requested))
+		g_iphone_set_status(&data->g, Bind);
+	/* Pair the published link and bind state with a post-publication wakeup. */
+	iphone_dev_notify(data);
 
 	return 0;
-}
-
-static void iphone_dev_role_switch_rebind_workfn(struct work_struct *work)
-{
-	struct iphone_dev_data *data =
-		container_of(to_delayed_work(work), struct iphone_dev_data,
-			     role_switch_rebind_work);
-	int ret;
-
-	data->role_switch_rebind_scheduled = false;
-
-	if (g_iphone_get_status(&data->g) != RoleSwitchFailed)
-		return;
-
-	pr_info("iPhone: rebinding gadget after role-switch failure debounce\n");
-	ret = iphone_dev_bind_gadget(data);
-	if (ret) {
-		pr_warn("iPhone: debounced gadget rebind failed: %d\n", ret);
-		return;
-	}
-
-	g_iphone_set_status(&data->g, Initial);
 }
 
 static void iphone_dev_clear_accessory_locked(struct iphone_dev_data *data)
 {
 	struct iap2_acc_accessory *acc = data->acc;
 
+	if (acc)
+		iphone_dev_remove_iap2_link(data);
 	iphone_dev_remove_accessory_link_locked(data);
 	data->acc = NULL;
 	if (acc)
 		iap2_acc_put_accessory(acc);
 }
 
-static void iphone_dev_accessory_watch_work(struct work_struct *work)
+static void iphone_dev_maintenance_workfn(struct work_struct *work)
 {
 	struct iphone_dev_data *data =
 		container_of(to_delayed_work(work), struct iphone_dev_data,
-			     accessory_watch_work);
-	struct iap2_acc_accessory *acc;
-	bool disconnected = false;
+			     maintenance_work);
+	bool connected;
+	int ret;
 
-	mutex_lock(&data->lock);
-	acc = data->acc;
-	if (iap2_acc_is_gone(acc)) {
-		disconnected = true;
-		iphone_dev_clear_accessory_locked(data);
-	}
-	mutex_unlock(&data->lock);
+	if (READ_ONCE(data->runtime_stopped))
+		return;
 
-	if (!disconnected) {
-		schedule_delayed_work(&data->accessory_watch_work,
-				      msecs_to_jiffies(100));
+	if (data->maintenance == IPHONE_MAINTENANCE_WATCH) {
+		mutex_lock(&data->lock);
+		connected = data->acc && !iap2_acc_is_gone(data->acc);
+		if (!connected)
+			iphone_dev_clear_accessory_locked(data);
+		mutex_unlock(&data->lock);
+		if (connected) {
+			queue_delayed_work(data->wq, &data->maintenance_work,
+					   msecs_to_jiffies(100));
+			return;
+		}
+		pr_info("iPhone: accessory disconnected, reverting OTG role\n");
+	} else if (data->maintenance == IPHONE_MAINTENANCE_REBIND) {
+		pr_info("iPhone: rebinding gadget after role-switch failure debounce\n");
+	} else {
 		return;
 	}
 
-	pr_info("iPhone: accessory disconnected, reverting OTG role\n");
-	iphone_dev_set_otg_role(&data->g, USB_ROLE_DEVICE);
-	data->g.role_switch_requested = false;
-	g_iphone_set_status(&data->g, Initial);
+	data->maintenance = IPHONE_MAINTENANCE_NONE;
+	WRITE_ONCE(data->g.role_switch_requested, false);
+	ret = iphone_dev_set_otg_role_internal(data, USB_ROLE_DEVICE, true);
+	if (ret)
+		pr_warn("iPhone: gadget restore failed: %d\n", ret);
+	else if (!READ_ONCE(data->g.role_switch_requested))
+		g_iphone_set_status(&data->g, Initial);
 }
 
 static int iphone_dev_set_otg_role(struct g_iphone *iphone_gadget,
@@ -249,19 +288,15 @@ static int iphone_dev_start_command(struct g_iphone *iphone_gadget,
 {
 	struct iphone_dev_data *data =
 		container_of(iphone_gadget, struct iphone_dev_data, g);
+	unsigned long flags;
 
-	if (data->recovery_work_scheduled) {
-		pr_info("iPhone: recovery request ignored (already queued)\n");
-		return 0;
+	spin_lock_irqsave(&data->request_lock, flags);
+	if (!data->recovery_command) {
+		data->recovery_command = command;
+		if (!queue_work(data->wq, &data->recovery_work))
+			data->recovery_command = NULL;
 	}
-
-	data->recovery_command = command;
-	data->recovery_work_scheduled = true;
-	pr_info("iPhone: recovery requested, scheduling deferred handler\n");
-	if (!schedule_delayed_work(&data->recovery_work, 0)) {
-		pr_info("iPhone: recovery request ignored (already scheduled)\n");
-		data->recovery_work_scheduled = false;
-	}
+	spin_unlock_irqrestore(&data->request_lock, flags);
 	return 0;
 }
 
@@ -277,140 +312,36 @@ static int iphone_dev_start_gadget(struct g_iphone *iphone_gadget)
 }
 
 
-static const char *iphone_dev_role_switch_name(const char *gadget_name)
-{
-	if (!gadget_name || !gadget_name[0])
-		return NULL;
-
-	if (!strcmp(gadget_name, "2184200.usb"))
-		return "ci_hdrc.1";
-	/* V821 exposes MUSB through a child UDC of the USB glue device. */
-	if (!strcmp(gadget_name, "musb-hdrc.1.auto"))
-		return "44100000.usb";
-
-	return gadget_name;
-}
-
-static int iphone_dev_update_role_switch_name_from_gadget(struct iphone_dev_data *data)
-{
-	const char *gadget_name;
-	const char *rs_name;
-
-	if (!data)
-		return -ENODEV;
-
-	if (data->udc[0])
-		gadget_name = data->udc;
-	else if (data->cdev && data->cdev->gadget)
-		gadget_name = data->cdev->gadget->name;
-	else
-		return -ENODEV;
-
-	rs_name = iphone_dev_role_switch_name(gadget_name);
-	if (!rs_name)
-		return -ENODEV;
-
-	strscpy(data->role_switch_name, rs_name, sizeof(data->role_switch_name));
-	return 0;
-}
-
-static int set_usb_role(struct iphone_dev_data *data, enum usb_role role)
-{
-	struct file *role_file;
-	char role_path[256];
-	const char *role_str;
-	const char *rs_name;
-	size_t role_len;
-	ssize_t written;
-	loff_t pos = 0;
-	int len;
-
-	if (!data)
-		return -EINVAL;
-
-	switch (role) {
-	case USB_ROLE_HOST:
-		role_str = "host";
-		break;
-	case USB_ROLE_DEVICE:
-		role_str = "device";
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	if (iphone_dev_update_role_switch_name_from_gadget(data) &&
-	    (!data->role_switch_name[0])) {
-		return -ENODEV;
-	}
-	rs_name = data->role_switch_name;
-	role_len = strlen(role_str);
-
-	len = snprintf(role_path, sizeof(role_path),
-		       "/sys/class/usb_role/%s-role-switch/role", rs_name);
-	if (len < 0 || (size_t)len >= sizeof(role_path))
-		return -ENAMETOOLONG;
-
-	role_file = filp_open(role_path, O_WRONLY, 0);
-	if (IS_ERR(role_file))
-		return PTR_ERR(role_file);
-
-	written = kernel_write(role_file, role_str, role_len, &pos);
-	filp_close(role_file, NULL);
-	if (written < 0)
-		return written;
-	if ((size_t)written != role_len)
-		return -EIO;
-
-	pr_info("iPhone: setting usb role: %s -> %s\n", role_path, role_str);
-
-	return 0;
-}
-
-
 static int iphone_dev_set_otg_role_internal(struct iphone_dev_data *data,
 					    enum usb_role role,
 					    bool manage_gadget_lifecycle)
 {
 	int ret;
-	bool role_is_device;
 
-	if (!data || !data->driver)
+	if (!data || !data->rs)
 		return -ENODEV;
-
-	switch (role) {
-	case USB_ROLE_DEVICE:
-		role_is_device = true;
-		break;
-	case USB_ROLE_HOST:
-		role_is_device = false;
-		break;
-	default:
+	if (role != USB_ROLE_HOST && role != USB_ROLE_DEVICE)
 		return -EINVAL;
-	}
 
-	if (data->otg_role_cache_valid &&
-	    data->otg_role_device_cached == role_is_device) {
-		pr_debug("iPhone: OTG role '%s' already cached, skipping\n",
-			 usb_role_string(role));
-		return 0;
-	}
-
+	/* Release the UDC and the HID session before the host-side bulk probe. */
 	if (role == USB_ROLE_HOST && manage_gadget_lifecycle) {
-		ret = iphone_dev_unbind_gadget(data);
+		ret = iphone_dev_unbind_gadget(data, -ECONNRESET);
 		if (ret)
 			return ret;
 	}
 
-	ret = set_usb_role(data, role);
+	ret = iphone_rs_set_role(data->rs, role);
 	if (ret) {
-		pr_warn("iPhone: failed OTG override hack: %d\n", ret);
-	} else {
-		data->otg_role_device_cached = role_is_device;
-		data->otg_role_cache_valid = true;
-	}
+		pr_warn("iPhone: failed to set OTG role: %d\n", ret);
+		if (role == USB_ROLE_HOST && manage_gadget_lifecycle) {
+			int restore = iphone_dev_bind_gadget(data);
 
-	pr_info("iPhone: set OTG role '%s'\n", usb_role_string(role));
+			if (restore) {
+				pr_warn("iPhone: gadget restore failed: %d\n", restore);
+			}
+		}
+		return ret;
+	}
 
 	if (role == USB_ROLE_DEVICE && manage_gadget_lifecycle) {
 		ret = iphone_dev_bind_gadget(data);
@@ -421,56 +352,51 @@ static int iphone_dev_set_otg_role_internal(struct iphone_dev_data *data,
 	return 0;
 }
 
+static void iphone_dev_role_switch_failed(struct iphone_dev_data *data)
+{
+	WRITE_ONCE(data->g.role_switch_requested, false);
+	g_iphone_set_status(&data->g, RoleSwitchFailed);
+	data->maintenance = IPHONE_MAINTENANCE_REBIND;
+	mod_delayed_work(data->wq, &data->maintenance_work,
+			 msecs_to_jiffies(IPHONE_ROLE_SWITCH_REBIND_DELAY_MS));
+}
+
 static void iphone_dev_role_switch_work(struct work_struct *work)
 {
 	struct iphone_dev_data *data =
 		container_of(work, struct iphone_dev_data, role_switch_work);
 	struct iap2_acc_accessory *acc;
+	unsigned long flags;
+	int ret;
 
-	if (g_iphone_get_status(&data->g) != RoleSwitch) {
-		data->role_switch_work_scheduled = false;
-		return;
-	}
+	if (READ_ONCE(data->runtime_stopped) ||
+	    !READ_ONCE(data->g.role_switch_requested))
+		goto done;
+	/* A status update during bind must not discard an accepted USB request. */
+	g_iphone_set_status(&data->g, RoleSwitch);
 
-	if (data->role_switch_rebind_scheduled) {
-		cancel_delayed_work_sync(&data->role_switch_rebind_work);
-		data->role_switch_rebind_scheduled = false;
-	}
+	/* Both callbacks run on our ordered queue; maintenance cannot be running. */
+	cancel_delayed_work(&data->maintenance_work);
+	data->maintenance = IPHONE_MAINTENANCE_NONE;
 
-	// msleep(IPHONE_ROLE_SWITCH_HOST_DELAY_MS);
-
-	if (iphone_dev_set_otg_role_internal(data, USB_ROLE_HOST, false)) {
-	// if (iphone_dev_set_otg_role(&data->g, USB_ROLE_HOST)) {
+	if (iphone_dev_set_otg_role_internal(data, USB_ROLE_HOST, true)) {
 		pr_warn("iPhone: role-switch host transition failed\n");
-		data->g.role_switch_requested = false;
+		WRITE_ONCE(data->g.role_switch_requested, false);
 		g_iphone_set_status(&data->g, Initial);
-		data->role_switch_work_scheduled = false;
-		return;
+		goto done;
 	}
 
 	acc = iap2_acc_probe_accessory();
+	if (READ_ONCE(data->runtime_stopped)) {
+		if (!IS_ERR(acc))
+			iap2_acc_put_accessory(acc);
+		goto done;
+	}
 	if (IS_ERR(acc)) {
 		pr_warn("iPhone: role-switch accessory probe failed: %ld\n",
 			PTR_ERR(acc));
-		/* Go back from host to device, but don't instantly publish the gadget yet; that will happen after debounce */
-		/*ret = iphone_dev_set_otg_role_internal(data, USB_ROLE_DEVICE, false);
-		if (ret) {
-			pr_warn("iPhone: role-switch device rollback failed: %d\n",
-				ret);
-			data->g.role_switch_requested = false;
-			g_iphone_set_status(&data->g, Initial);
-			data->role_switch_work_scheduled = false;
-			return;
-		}*/
-
-		data->g.role_switch_requested = false;
-		g_iphone_set_status(&data->g, RoleSwitchFailed);
-		msleep(1000); // TODO [hack]
-		data->role_switch_rebind_scheduled = true;
-		mod_delayed_work(system_wq, &data->role_switch_rebind_work,
-				 msecs_to_jiffies(IPHONE_ROLE_SWITCH_REBIND_DEBOUNCE_MS));
-		data->role_switch_work_scheduled = false;
-		return;
+		iphone_dev_role_switch_failed(data);
+		goto done;
 	}
 
 	pr_info("iPhone: role-switch accessory probe succeeded for if=%s\n",
@@ -479,26 +405,43 @@ static void iphone_dev_role_switch_work(struct work_struct *work)
 	mutex_lock(&data->lock);
 	iphone_dev_clear_accessory_locked(data);
 	data->acc = acc;
-	if (iphone_dev_add_accessory_link_locked(data, acc))
-		pr_warn("iPhone: failed to create accessory iap2_accessory link\n");
+	ret = iphone_dev_add_accessory_link_locked(data, acc);
+	if (!ret)
+		ret = iphone_dev_add_iap2_link(data);
+	if (ret)
+		iphone_dev_clear_accessory_locked(data);
 	mutex_unlock(&data->lock);
+	if (ret) {
+		pr_warn("iPhone: failed to publish bulk iAP2 links: %d\n", ret);
+		iphone_dev_role_switch_failed(data);
+		goto done;
+	}
 
 	g_iphone_set_status(&data->g, Accessory);
-	mod_delayed_work(system_wq, &data->accessory_watch_work,
+	/* A previously queued status worker can run before the bulk link exists. */
+	iphone_dev_notify(data);
+	data->maintenance = IPHONE_MAINTENANCE_WATCH;
+	mod_delayed_work(data->wq, &data->maintenance_work,
 			 msecs_to_jiffies(100));
+done:
+	spin_lock_irqsave(&data->request_lock, flags);
 	data->role_switch_work_scheduled = false;
+	spin_unlock_irqrestore(&data->request_lock, flags);
 }
 
 static int iphone_dev_start_role_switch_probe(struct g_iphone *iphone_gadget)
 {
 	struct iphone_dev_data *data =
 		container_of(iphone_gadget, struct iphone_dev_data, g);
+	unsigned long flags;
 
-	if (data->role_switch_work_scheduled)
-		return 0;
-
-	data->role_switch_work_scheduled = true;
-	schedule_work(&data->role_switch_work);
+	spin_lock_irqsave(&data->request_lock, flags);
+	if (!data->role_switch_work_scheduled) {
+		data->role_switch_work_scheduled = true;
+		if (!queue_work(data->wq, &data->role_switch_work))
+			data->role_switch_work_scheduled = false;
+	}
+	spin_unlock_irqrestore(&data->request_lock, flags);
 	return 0;
 }
 
@@ -509,7 +452,6 @@ static int iphone_dev_driver_bind(struct usb_composite_dev *cdev)
 	struct iphone_dev_data *data = ipdrv->data;
 	data->cdev = cdev;
 	data->gadget_registered = true;
-	iphone_dev_update_role_switch_name_from_gadget(data);
 
 	pr_info("iPhone: driver binding 4 configurations\n");
 
@@ -533,7 +475,7 @@ static int iphone_dev_driver_unbind(struct usb_composite_dev *cdev)
 
 	pr_info("iPhone: driver unbind");
 
-	data->role_switch_work_scheduled = false;
+	iphone_dev_remove_iap2_link(data);
 	mutex_lock(&data->lock);
 	iphone_dev_clear_accessory_locked(data);
 	mutex_unlock(&data->lock);
@@ -543,26 +485,43 @@ static int iphone_dev_driver_unbind(struct usb_composite_dev *cdev)
 	return 0;
 }
 
+struct iphone_initial_bind {
+	struct work_struct work;
+	struct iphone_dev_data *data;
+	int result;
+};
+
+static void iphone_dev_initial_bind_workfn(struct work_struct *work)
+{
+	struct iphone_initial_bind *bind =
+		container_of(work, struct iphone_initial_bind, work);
+
+	bind->result = iphone_dev_bind_gadget(bind->data);
+	if (bind->result)
+		iphone_dev_disable_runtime(bind->data);
+}
+
 struct iphone_dev_data *iphone_dev_alloc(struct device *owner_dev, char *udc_name, char* serial)
 {
 	int ret = -ENOMEM;
-	struct iphone_dev_data *data;
-	size_t count, i;
+	struct iphone_dev_data *data = NULL;
+	struct iphone_initial_bind bind;
+	size_t i;
 
 	if (!serial)
 		serial = DEFAULT_IPHONE_SERIAL;
 
 	data = kzalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
-		goto fail;
+		return ERR_PTR(-ENOMEM);
+	mutex_init(&data->lock);
+	spin_lock_init(&data->request_lock);
 
 	/* copy device descriptor */
 	data->dev_desc = iphone_device_desc;
 	data->owner_dev = owner_dev;
-	mutex_init(&data->lock);
 
 	/* copy strings table */
-	count = ARRAY_SIZE(iphone_strings);
 	data->stringtab = kmemdup(iphone_strings,
 	                           sizeof(iphone_strings),
 	                           GFP_KERNEL);
@@ -612,13 +571,7 @@ struct iphone_dev_data *iphone_dev_alloc(struct device *owner_dev, char *udc_nam
 		data->driver->drv.udc_name = NULL;
 		data->udc_auto = true;
 	} else {
-		const char *rs_name;
-
 		strscpy(data->udc, udc_name, sizeof(data->udc));
-		rs_name = iphone_dev_role_switch_name(udc_name);
-		if (rs_name)
-			strscpy(data->role_switch_name, rs_name,
-				sizeof(data->role_switch_name));
 	}
 
 	/* create runtime-unique driver name */
@@ -636,8 +589,12 @@ struct iphone_dev_data *iphone_dev_alloc(struct device *owner_dev, char *udc_nam
 
 	data->driver_registered = false;
 	data->gadget_registered = false;
-	data->otg_role_device_cached = true;
-	data->otg_role_cache_valid = false;
+	data->rs = iphone_rs_sysfs_create(udc_name);
+	if (IS_ERR(data->rs)) {
+		ret = PTR_ERR(data->rs);
+		data->rs = NULL;
+		goto fail;
+	}
 	data->g.set_otg_role = iphone_dev_set_otg_role;
 	data->g.start_role_switch_probe = iphone_dev_start_role_switch_probe;
 	data->g.start_recovery = iphone_dev_start_recovery;
@@ -645,16 +602,21 @@ struct iphone_dev_data *iphone_dev_alloc(struct device *owner_dev, char *udc_nam
 	data->g.notify_status_changed = iphone_dev_notify_status_changed;
 	INIT_WORK(&data->status_notify_work, iphone_dev_status_notify_workfn);
 	INIT_WORK(&data->role_switch_work, iphone_dev_role_switch_work);
-	INIT_DELAYED_WORK(&data->recovery_work, iphone_dev_recovery_workfn);
-	INIT_DELAYED_WORK(&data->role_switch_rebind_work,
-			  iphone_dev_role_switch_rebind_workfn);
-	INIT_DELAYED_WORK(&data->accessory_watch_work,
-			  iphone_dev_accessory_watch_work);
+	INIT_WORK(&data->recovery_work, iphone_dev_recovery_workfn);
+	INIT_DELAYED_WORK(&data->maintenance_work, iphone_dev_maintenance_workfn);
+	data->wq = alloc_ordered_workqueue("iphone-%s", 0, dev_name(owner_dev));
+	if (!data->wq)
+		goto fail;
 
-	pr_info("iPhone: initial gadget bind with udc_name '%s' rs_name '%s'\n",
-		udc_name, data->role_switch_name[0] ? data->role_switch_name : "<unset>");
+	pr_info("iPhone: initial gadget bind with udc_name '%s'\n", udc_name);
 
-	ret = iphone_dev_bind_gadget(data);
+	/* Early USB requests queue behind this bind, never alongside it. */
+	bind.data = data;
+	INIT_WORK_ONSTACK(&bind.work, iphone_dev_initial_bind_workfn);
+	queue_work(data->wq, &bind.work);
+	flush_work(&bind.work);
+	destroy_work_on_stack(&bind.work);
+	ret = bind.result;
 	if (ret) {
 		pr_warn("iPhone: initial gadget bind failed: %d\n", ret);
 		goto fail;
@@ -664,43 +626,47 @@ struct iphone_dev_data *iphone_dev_alloc(struct device *owner_dev, char *udc_nam
 	return data;
 
 fail:
-	kfree(data->driver);
-	kfree(data->stringtab);
-	kfree(data);
+	iphone_dev_free(data);
 	return ERR_PTR(ret);
+}
+
+/* Called by initial-bind failure or the external owner, never concurrently. */
+static void iphone_dev_disable_runtime(struct iphone_dev_data *data)
+{
+	if (data->runtime_stopped)
+		return;
+	WRITE_ONCE(data->runtime_stopped, true);
+	disable_work(&data->role_switch_work);
+	disable_delayed_work(&data->maintenance_work);
+	disable_work(&data->recovery_work);
+	disable_work(&data->status_notify_work);
 }
 
 static void iphone_dev_stop_runtime(struct iphone_dev_data *data)
 {
-	if (!data)
+	if (!data->wq)
 		return;
 
-	cancel_delayed_work_sync(&data->accessory_watch_work);
-	cancel_delayed_work_sync(&data->role_switch_rebind_work);
-	cancel_delayed_work_sync(&data->recovery_work);
-	cancel_work_sync(&data->role_switch_work);
-	cancel_work_sync(&data->status_notify_work);
-	data->role_switch_work_scheduled = false;
-	data->role_switch_rebind_scheduled = false;
-	data->recovery_work_scheduled = false;
+	iphone_dev_disable_runtime(data);
+	flush_workqueue(data->wq);
+	/* Keep wq and data alive while unregister joins the USB producers.
+	 * Their late queue attempts are harmless: all work stays disabled.
+	 */
+	iphone_dev_unbind_gadget(data, -ENODEV);
+	destroy_workqueue(data->wq);
 
 	mutex_lock(&data->lock);
 	iphone_dev_clear_accessory_locked(data);
 	mutex_unlock(&data->lock);
 }
 
-int iphone_dev_free(struct iphone_dev_data *data) {
-	if (!data || !data->driver) {
+int iphone_dev_free(struct iphone_dev_data *data)
+{
+	if (!data)
 		return -ENODEV;
-	}
 
 	iphone_dev_stop_runtime(data);
-
-	pr_debug("iPhone: calling gadget unregister\n");
-	iphone_dev_unbind_gadget(data);
-	cancel_work_sync(&data->status_notify_work);
-	
-	/* This code has been checked several times to verify there is no potential for UAF */
+	iphone_rs_sysfs_destroy(data->rs);
 	kfree(data->stringtab);
 	kfree(data->driver);
 	kfree(data);

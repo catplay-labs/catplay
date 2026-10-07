@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #pragma once
-#include "composite.h"
+#include "libcomposite/composite.h"
 
 /*
     {.id = 5, .s = "PTP"},

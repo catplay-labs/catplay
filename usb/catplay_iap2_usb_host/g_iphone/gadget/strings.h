@@ -1,8 +1,8 @@
 #pragma once
 
-#include "composite.h"
+#include "libcomposite/composite.h"
 
-#define DEFAULT_IPHONE_SERIAL "00008130000E044E384B1D3ADDDDDDDDDDDDDCAD"
+#define DEFAULT_IPHONE_SERIAL "00008130000E044E384B1D3ADDDDDDD000BADCAD"
 
 static char iphone_serial_buf[41] = DEFAULT_IPHONE_SERIAL;
 static char iphone_serial_r_buf[64] = DEFAULT_IPHONE_SERIAL "-R";

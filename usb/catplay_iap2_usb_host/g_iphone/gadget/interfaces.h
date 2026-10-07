@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #pragma once
 
-#include "composite.h"
+#include "libcomposite/composite.h"
 #include <uapi/linux/usb/audio.h>
 #include "interfaces_audio.h"
 

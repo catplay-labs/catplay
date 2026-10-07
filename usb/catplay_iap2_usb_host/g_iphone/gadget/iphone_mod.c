@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include "composite.h"
+#include "libcomposite/composite.h"
 #include "iphone_dev.h"
 #include "iphone_class.h"
 #include "iphone_mod.h"
@@ -73,7 +73,3 @@ module_exit(iphone_exit);
 MODULE_AUTHOR("CatPlay");
 MODULE_DESCRIPTION("iPhone role-switch gadget that works with CarPlay headunits that perform extremely deep USB heuristics");
 MODULE_LICENSE("GPL");
-
-MODULE_SOFTDEP("pre: libcomposite");
-MODULE_SOFTDEP("pre: iap2_char");
-MODULE_SOFTDEP("pre: iap2_scan");
