@@ -1,7 +1,7 @@
 use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
 
 use crate::{
-    cipher::{HomeKitChaChaNonce, HomeKitCipherError},
+    cipher::{ChaChaPrefetchStats, ChaChaPrefetchStatus, HomeKitChaChaNonce, HomeKitCipherError},
     hkdf_extract_and_expand,
 };
 
@@ -39,6 +39,18 @@ impl HomeKitCipherRing {
         let cipher = LessSafeKey::new(UnboundKey::new(&CHACHA20_POLY1305, &key).unwrap());
         Self { cipher }
     }
+
+    /// Ring has no separate keystream prefetch; keep the common consumer API.
+    pub fn reset_prefetch(&mut self, _next_nonce: HomeKitChaChaNonce, _size: usize) -> Option<ChaChaPrefetchStats> {
+        None
+    }
+
+    pub fn prefetch_status(&self) -> Option<ChaChaPrefetchStatus> {
+        None
+    }
+
+    /// Best-effort RX preference; ring always calculates and verifies Poly1305.
+    pub fn set_prefer_poly_skip(&mut self) {}
 
     pub fn compute_key(shared_secret: &[u8; 32], salt: &[u8], info: &[u8]) -> [u8; 32] {
         hkdf_extract_and_expand(salt, shared_secret, info).unwrap()
@@ -117,6 +129,21 @@ impl HomeKitCipherRing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn poly_skip_preference_still_verifies_rx() {
+        let mut cipher = HomeKitCipherRing::new([0x42; 32]);
+        cipher.set_prefer_poly_skip();
+        let nonce = HomeKitChaChaNonce(12);
+        let mut frame = b"screen payload".to_vec();
+        let tag = cipher.encrypt(&mut frame, b"header", nonce).unwrap();
+        frame.extend_from_slice(&tag);
+        *frame.last_mut().unwrap() ^= 1;
+        assert!(matches!(
+            cipher.decrypt(&mut frame, b"header", nonce),
+            Err(HomeKitCipherError::InvalidSignature)
+        ));
+    }
 
     #[test]
     fn decrypt_progressive_short_non_final_chunk_is_noop() {

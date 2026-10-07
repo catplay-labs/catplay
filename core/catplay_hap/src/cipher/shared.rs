@@ -31,3 +31,7 @@ pub enum HomeKitCipherError {
     #[error("AES-128-CBC requires data length divisible by 16")]
     AesCbcBadBlock,
 }
+
+/// Logical payload bytes for one prefetch target (header/tag and block padding excluded).
+pub type ChaChaPrefetchStats = crate::prefetch::PrefetchStats;
+pub type ChaChaPrefetchStatus = crate::prefetch::PrefetchStatus;

@@ -724,6 +724,7 @@ impl PairSetup {
     }
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn test_pair_setup_end_to_end() {
     use catplay_tracing::logger::setup_test_logger;

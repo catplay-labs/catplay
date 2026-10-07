@@ -95,8 +95,7 @@ fn warn_if_fake_encryption(name: &str, input: &[u8], output: &[u8]) {
 }
 
 fn stress_enabled() -> bool {
-    true
-    // matches!(std::env::var_os("CATPLAY_AES_CTR_STRESS"), Some(val) if val != "0")
+    matches!(std::env::var_os("CATPLAY_AES_CTR_STRESS"), Some(value) if value != "0")
 }
 
 fn stress_rounds() -> usize {
@@ -219,10 +218,20 @@ fn verify_test_vectors() {
 
     let mut output = TEST_PLAINTEXT;
     match Aes128CtrKernelStream::new(&TEST_KEY, &TEST_IV) {
-        Ok(mut cipher) => match cipher.apply_keystream(&mut output) {
-            Ok(()) => print_vector_result("kernel", &output),
-            Err(err) => eprintln!("aes_ctr/kernel test-vector: err apply={err:?} output={}", hex(&output)),
-        },
+        Ok(mut cipher) => {
+            eprintln!(
+                "aes_ctr/kernel keystream-only: {}",
+                if cipher.uses_keystream_only() {
+                    "enabled"
+                } else {
+                    "unsupported; fallback=legacy encrypt/XOR"
+                }
+            );
+            match cipher.apply_keystream(&mut output) {
+                Ok(()) => print_vector_result("kernel", &output),
+                Err(err) => eprintln!("aes_ctr/kernel test-vector: err apply={err:?} output={}", hex(&output)),
+            }
+        }
         Err(err) => eprintln!("aes_ctr/kernel test-vector: err init={err:?}"),
     }
 }

@@ -1,6 +1,6 @@
 use crate::fast_chacha::init_cpu_caps;
 
-#[cfg(all(fast_chacha_asm, target_os = "linux", target_arch = "mips"))]
+#[cfg(all(fast_chacha_asm, target_os = "linux", any(target_arch = "mips", target_arch = "riscv32")))]
 #[derive(Clone)]
 #[repr(C, align(4))]
 struct Aligned16([u8; 16]);
@@ -17,8 +17,8 @@ enum FastPoly1305Backend {
         buffer: [u8; 16],
         leftover: usize,
     },
-    #[cfg(all(fast_chacha_asm, target_os = "linux", target_arch = "mips"))]
-    MipsAsm {
+    #[cfg(all(fast_chacha_asm, target_os = "linux", any(target_arch = "mips", target_arch = "riscv32")))]
+    ScalarAsm {
         ctx: [u32; 12],
         pad: Aligned16,
         buffer: Aligned16,
@@ -30,7 +30,7 @@ impl FastPoly1305 {
     pub fn new(key: &[u8; 32]) -> Self {
         init_cpu_caps();
 
-        #[cfg(all(fast_chacha_asm, target_os = "linux", target_arch = "mips"))]
+        #[cfg(all(fast_chacha_asm, target_os = "linux", any(target_arch = "mips", target_arch = "riscv32")))]
         {
             let mut ctx = [0u32; 12];
             let mut pad = Aligned16([0u8; 16]);
@@ -39,7 +39,7 @@ impl FastPoly1305 {
                 poly1305_init(ctx.as_mut_ptr(), key.as_ptr());
             }
             return Self {
-                backend: FastPoly1305Backend::MipsAsm {
+                backend: FastPoly1305Backend::ScalarAsm {
                     ctx,
                     pad,
                     buffer: Aligned16([0; 16]),
@@ -100,8 +100,8 @@ impl FastPoly1305 {
                     *leftover = input.len();
                 }
             }
-            #[cfg(all(fast_chacha_asm, target_os = "linux", target_arch = "mips"))]
-            FastPoly1305Backend::MipsAsm { ctx, buffer, leftover, .. } => {
+            #[cfg(all(fast_chacha_asm, target_os = "linux", any(target_arch = "mips", target_arch = "riscv32")))]
+            FastPoly1305Backend::ScalarAsm { ctx, buffer, leftover, .. } => {
                 let mut input = data;
 
                 if *leftover != 0 {
@@ -150,8 +150,8 @@ impl FastPoly1305 {
 
                 state.finalize()
             }
-            #[cfg(all(fast_chacha_asm, target_os = "linux", target_arch = "mips"))]
-            FastPoly1305Backend::MipsAsm {
+            #[cfg(all(fast_chacha_asm, target_os = "linux", any(target_arch = "mips", target_arch = "riscv32")))]
+            FastPoly1305Backend::ScalarAsm {
                 mut ctx,
                 pad,
                 mut buffer,
@@ -187,8 +187,8 @@ impl FastPoly1305 {
                 *buffer = [0u8; 16];
                 *leftover = 0;
             }
-            #[cfg(all(fast_chacha_asm, target_os = "linux", target_arch = "mips"))]
-            FastPoly1305Backend::MipsAsm { ctx, pad, leftover, .. } => {
+            #[cfg(all(fast_chacha_asm, target_os = "linux", any(target_arch = "mips", target_arch = "riscv32")))]
+            FastPoly1305Backend::ScalarAsm { ctx, pad, leftover, .. } => {
                 *ctx = [0u32; 12];
                 pad.0.copy_from_slice(&key[16..]);
                 *leftover = 0;
@@ -400,7 +400,7 @@ impl FallbackPoly1305State {
     }
 }
 
-#[cfg(all(fast_chacha_asm, target_os = "linux", target_arch = "mips"))]
+#[cfg(all(fast_chacha_asm, target_os = "linux", any(target_arch = "mips", target_arch = "riscv32")))]
 unsafe extern "C" {
     fn poly1305_init(ctx: *mut u32, key: *const u8) -> i32;
     fn poly1305_blocks(ctx: *mut u32, inp: *const u8, len: usize, padbit: u32);

@@ -37,21 +37,22 @@
 /// This function uses unsafe code to call libc functions (`open`, `read`, `close`)
 /// and to interpret raw bytes as `usize`.
 pub fn get_auxv(target: usize) -> Option<usize> {
+    use core::ffi::{c_char, c_void};
     use core::mem::size_of;
 
     // Path to the auxiliary vector file for the current process.
     let path = b"/proc/self/auxv\0";
     unsafe extern "C" {
         /// Opens a file and returns a file descriptor.
-        fn open(pathname: *const u8, flags: i32) -> i32;
+        fn open(pathname: *const c_char, flags: i32, ...) -> i32;
         /// Reads data from a file descriptor into a buffer.
-        fn read(fd: i32, buf: *mut u8, count: usize) -> isize;
+        fn read(fd: i32, buf: *mut c_void, count: usize) -> isize;
         /// Closes a file descriptor.
         fn close(fd: i32) -> i32;
     }
 
     // Open the auxv file for reading.
-    let fd = unsafe { open(path.as_ptr(), 0) };
+    let fd = unsafe { open(path.as_ptr().cast(), 0) };
     if fd < 0 {
         return None;
     }
@@ -59,7 +60,7 @@ pub fn get_auxv(target: usize) -> Option<usize> {
     // Buffer to hold one (key, value) pair from auxv.
     let mut buf = [0u8; size_of::<usize>() * 2];
     // Read each (key, value) pair and check if the key matches the target.
-    while unsafe { read(fd, buf.as_mut_ptr(), buf.len()) } == buf.len() as isize {
+    while unsafe { read(fd, buf.as_mut_ptr().cast(), buf.len()) } == buf.len() as isize {
         let key = usize::from_ne_bytes(buf[..size_of::<usize>()].try_into().unwrap());
         let val = usize::from_ne_bytes(buf[size_of::<usize>()..].try_into().unwrap());
         if key == target {

@@ -47,6 +47,7 @@ fn main() {
         // MIPS 32/64
         ("mips", "linux") | ("mipsel", "linux") => "asm/chacha-mips-o32.S",
         ("mips64", "linux") | ("mips64el", "linux") => "asm/chacha-mips-n64.S",
+        ("riscv32", "linux") => "asm/chacha-riscv32-linux.S",
         /*
         // PowerPC 64
         ("powerpc64", "linux") => "asm/chacha-ppc64-elf.S",
@@ -182,10 +183,12 @@ fn main() {
 
     println!("cargo:rustc-link-lib=static=fast_chacha_asm");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed={src_s}");
     println!("cargo:rerun-if-changed=asm/chacha20_poly1305_armv8-linux.S");
     println!("cargo:rerun-if-changed=asm/chacha20_poly1305_mips-o32.S");
     println!("cargo:rerun-if-changed=asm/chacha20_poly1305_x86_64-linux.S");
     println!("cargo:rerun-if-changed=asm/mips_arch.h");
+    println!("cargo:rerun-if-changed=asm/poly1305-riscv32-linux.S");
 }
 
 fn write_openssl_asm_base_header(out_dir: &Path) {
@@ -253,6 +256,7 @@ fn prepare_poly1305_asm_sources(build: &mut cc::Build, out_dir: &Path, arch: &st
             vec![dst]
         }
         "mips" | "mipsel" => vec![PathBuf::from("asm/poly1305_mips-o32.S")],
+        "riscv32" => vec![PathBuf::from("asm/poly1305-riscv32-linux.S")],
         _ => Vec::new(),
     }
 }

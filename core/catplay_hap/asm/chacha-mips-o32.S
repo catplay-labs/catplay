@@ -377,6 +377,9 @@ ChaCha20_ctr32:
 	li		$1,9
 	bal		.Lalt_entry
 
+	# A null input requests raw keystream: no input loads or XOR.
+	beqz		$5,.Lkeystream
+
 	sltiu		$1,$6,64
 	or		$31,$5,$4
 	andi		$31,$31,3		# both are aligned?
@@ -709,6 +712,156 @@ ChaCha20_ctr32:
 
 	beqz		$9,.Loop_aligned
 #endif
+
+	b		.Ltail
+
+.align 4
+.Lkeystream:
+	sltiu		$1,$6,64
+	bnez		$1,.Ltail
+#ifndef MIPSEB
+	andi		$1,$4,3
+	bnez		$1,.Lkeystream_unaligned
+	sw		$10,0($4)
+	sw		$11,4($4)
+	sw		$12,8($4)
+	sw		$13,12($4)
+	sw		$14,16($4)
+	sw		$15,20($4)
+	sw		$16,24($4)
+	sw		$17,28($4)
+	sw		$18,32($4)
+	sw		$19,36($4)
+	sw		$20,40($4)
+	sw		$21,44($4)
+	sw		$22,48($4)
+	sw		$23,52($4)
+	sw		$24,56($4)
+	sw		$25,60($4)
+	b		.Lkeystream_next
+#endif
+.Lkeystream_unaligned:
+	sb		$10,0($4)
+	srl		$10,$10,8
+	sb		$10,1($4)
+	srl		$10,$10,8
+	sb		$10,2($4)
+	srl		$10,$10,8
+	sb		$10,3($4)
+	sb		$11,4($4)
+	srl		$11,$11,8
+	sb		$11,5($4)
+	srl		$11,$11,8
+	sb		$11,6($4)
+	srl		$11,$11,8
+	sb		$11,7($4)
+	sb		$12,8($4)
+	srl		$12,$12,8
+	sb		$12,9($4)
+	srl		$12,$12,8
+	sb		$12,10($4)
+	srl		$12,$12,8
+	sb		$12,11($4)
+	sb		$13,12($4)
+	srl		$13,$13,8
+	sb		$13,13($4)
+	srl		$13,$13,8
+	sb		$13,14($4)
+	srl		$13,$13,8
+	sb		$13,15($4)
+	sb		$14,16($4)
+	srl		$14,$14,8
+	sb		$14,17($4)
+	srl		$14,$14,8
+	sb		$14,18($4)
+	srl		$14,$14,8
+	sb		$14,19($4)
+	sb		$15,20($4)
+	srl		$15,$15,8
+	sb		$15,21($4)
+	srl		$15,$15,8
+	sb		$15,22($4)
+	srl		$15,$15,8
+	sb		$15,23($4)
+	sb		$16,24($4)
+	srl		$16,$16,8
+	sb		$16,25($4)
+	srl		$16,$16,8
+	sb		$16,26($4)
+	srl		$16,$16,8
+	sb		$16,27($4)
+	sb		$17,28($4)
+	srl		$17,$17,8
+	sb		$17,29($4)
+	srl		$17,$17,8
+	sb		$17,30($4)
+	srl		$17,$17,8
+	sb		$17,31($4)
+	sb		$18,32($4)
+	srl		$18,$18,8
+	sb		$18,33($4)
+	srl		$18,$18,8
+	sb		$18,34($4)
+	srl		$18,$18,8
+	sb		$18,35($4)
+	sb		$19,36($4)
+	srl		$19,$19,8
+	sb		$19,37($4)
+	srl		$19,$19,8
+	sb		$19,38($4)
+	srl		$19,$19,8
+	sb		$19,39($4)
+	sb		$20,40($4)
+	srl		$20,$20,8
+	sb		$20,41($4)
+	srl		$20,$20,8
+	sb		$20,42($4)
+	srl		$20,$20,8
+	sb		$20,43($4)
+	sb		$21,44($4)
+	srl		$21,$21,8
+	sb		$21,45($4)
+	srl		$21,$21,8
+	sb		$21,46($4)
+	srl		$21,$21,8
+	sb		$21,47($4)
+	sb		$22,48($4)
+	srl		$22,$22,8
+	sb		$22,49($4)
+	srl		$22,$22,8
+	sb		$22,50($4)
+	srl		$22,$22,8
+	sb		$22,51($4)
+	sb		$23,52($4)
+	srl		$23,$23,8
+	sb		$23,53($4)
+	srl		$23,$23,8
+	sb		$23,54($4)
+	srl		$23,$23,8
+	sb		$23,55($4)
+	sb		$24,56($4)
+	srl		$24,$24,8
+	sb		$24,57($4)
+	srl		$24,$24,8
+	sb		$24,58($4)
+	srl		$24,$24,8
+	sb		$24,59($4)
+	sb		$25,60($4)
+	srl		$25,$25,8
+	sb		$25,61($4)
+	srl		$25,$25,8
+	sb		$25,62($4)
+	srl		$25,$25,8
+	sb		$25,63($4)
+.Lkeystream_next:
+	addu		$30,$30,1
+	subu		$6,$6,64
+	addu		$4,$4,64
+	beqz		$6,.Ldone
+	li		$1,9
+	bal		__ChaCha
+	b		.Lkeystream
+
 .Ltail:
 	move		$30,$29
 	sw		$11, 4*1($29)
@@ -726,6 +879,24 @@ ChaCha20_ctr32:
 	sw		$23,4*13($29)
 	sw		$24,4*14($29)
 	sw		$25,4*15($29)
+
+
+	beqz		$5,.Lkeystream_tail
+	b		.Loop_tail
+.Lkeystream_tail:
+	beqz		$6,.Ldone
+	li		$9,4
+.Lkeystream_tail_word:
+	sb		$10,0($4)
+	srl		$10,$10,8
+	addu		$4,$4,1
+	subu		$6,$6,1
+	beqz		$6,.Ldone
+	subu		$9,$9,1
+	bnez		$9,.Lkeystream_tail_word
+	addu		$30,$30,4
+	lw		$10,0($30)
+	b		.Lkeystream_tail
 
 .Loop_tail:
 	sltiu		$1,$6,4

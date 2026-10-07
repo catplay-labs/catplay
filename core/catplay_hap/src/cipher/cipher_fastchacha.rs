@@ -1,14 +1,21 @@
 use log::{debug, warn};
 
 use crate::{
-    cipher::{HomeKitChaChaNonce, HomeKitCipherError},
+    cipher::{ChaChaPrefetchStats, ChaChaPrefetchStatus, HomeKitChaChaNonce, HomeKitCipherError},
     fast_chacha::{FastChaCha20, FastPoly1305, is_asm_available_chacha20},
     hkdf_extract_and_expand,
 };
 
+mod prefetch;
+
+// Counter 0 is reserved for Poly1305.
+const MAX_PAYLOAD_BYTES: u64 = u32::MAX as u64 * 64;
+
 pub struct HomeKitCipherFast {
+    prefetch: Option<prefetch::Prefetch>,
     key: [u8; 32],
     warned_poly: bool,
+    prefer_poly_skip: bool,
     progressive_tag_state: Option<ProgressiveTagState>,
 }
 
@@ -28,10 +35,37 @@ impl HomeKitCipherFast {
         }
 
         Self {
+            prefetch: None,
             key,
             warned_poly: false,
+            prefer_poly_skip: false,
             progressive_tag_state: None,
         }
+    }
+
+    /// Finish the previous RX or TX frame and schedule a finite payload prefix for
+    /// `next_nonce`. Zero disables generation. Never waits for the worker;
+    /// in-flight discarded work is reported separately from completed output.
+    /// Also abandons any unfinished progressive MAC. Call between frames.
+    /// Without std generation is synchronous. The first reset returns None.
+    pub fn reset_prefetch(&mut self, next_nonce: HomeKitChaChaNonce, size: usize) -> Option<ChaChaPrefetchStats> {
+        self.progressive_tag_state = None;
+        let size = (size as u64).min(MAX_PAYLOAD_BYTES) as usize;
+        self.prefetch
+            .get_or_insert_with(Default::default)
+            .reset(self.key, next_nonce, size)
+    }
+
+    /// Snapshot of the current target; does not stop or restart generation.
+    pub fn prefetch_status(&self) -> Option<ChaChaPrefetchStatus> {
+        self.prefetch.as_ref().and_then(|p| p.status())
+    }
+
+    /// Prefer skipping Poly1305 calculation and verification on RX only.
+    /// Received payloads are unauthenticated when enabled. Set between frames.
+    pub fn set_prefer_poly_skip(&mut self) {
+        self.prefer_poly_skip = true;
+        self.progressive_tag_state = None;
     }
 
     pub fn compute_key(shared_secret: &[u8; 32], salt: &[u8], info: &[u8]) -> [u8; 32] {
@@ -61,6 +95,12 @@ impl HomeKitCipherFast {
         let data_and_tag_len = data_and_tag.len();
         let final_chunk = end == expected_total_len;
 
+        if expected_total_len < TAG_SIZE {
+            return Err(HomeKitCipherError::PayloadTooSmall);
+        }
+        if (expected_total_len - TAG_SIZE) as u64 > MAX_PAYLOAD_BYTES {
+            return Err(HomeKitCipherError::UnexpectedDecryptedLength);
+        }
         if data_and_tag_len < TAG_SIZE {
             if !final_chunk {
                 return Ok(&mut data_and_tag[..0]);
@@ -80,7 +120,7 @@ impl HomeKitCipherFast {
         let expected_payload_len = expected_total_len - TAG_SIZE;
         let nonce_bytes = nonce_to_bytes(nonce.0);
 
-        if start_payload < end_payload {
+        if !self.prefer_poly_skip && start_payload < end_payload {
             let ciphertext_chunk = &data_and_tag[start_payload..end_payload];
             if let Err(err) = self.update_progressive_tag_state(
                 aad,
@@ -96,10 +136,11 @@ impl HomeKitCipherFast {
         }
 
         if start_payload < end_payload {
-            apply_keystream_at_offset(self.key, nonce_bytes, start_payload, &mut data_and_tag[start_payload..end_payload]);
+            let data = &mut data_and_tag[start_payload..end_payload];
+            self.apply_payload_keystream(nonce, start_payload, data);
         }
 
-        if final_chunk {
+        if final_chunk && !self.prefer_poly_skip {
             let tag = &data_and_tag[payload_len..];
             let expected_tag =
                 match self.finalize_progressive_tag_state(aad, &nonce_bytes, expected_total_len, expected_payload_len, start_payload) {
@@ -132,9 +173,16 @@ impl HomeKitCipherFast {
 
     pub fn encrypt(&mut self, data: &mut [u8], aad: &[u8], nonce: HomeKitChaChaNonce) -> Result<[u8; 16], HomeKitCipherError> {
         let nonce_bytes = nonce_to_bytes(nonce.0);
-        let mut chacha = FastChaCha20::new_with_counter(self.key, nonce_bytes, 1);
-        chacha.apply_keystream(data);
+        self.apply_payload_keystream(nonce, 0, data);
         Ok(self.compute_tag(data, aad, &nonce_bytes))
+    }
+
+    fn apply_payload_keystream(&mut self, nonce: HomeKitChaChaNonce, offset: usize, data: &mut [u8]) {
+        if let Some(prefetch) = &mut self.prefetch {
+            prefetch.apply(nonce, offset, data);
+            return;
+        }
+        apply_keystream_at_offset(self.key, nonce_to_bytes(nonce.0), offset, data);
     }
 
     fn compute_tag(&mut self, ciphertext: &[u8], aad: &[u8], nonce_bytes: &[u8; 12]) -> [u8; 16] {
@@ -303,6 +351,172 @@ fn apply_keystream_at_offset(key: [u8; 32], nonce: [u8; 12], stream_offset: usiz
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "std")]
+    fn wait_prefetch(cipher: &HomeKitCipherFast, bytes: usize) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while cipher.prefetch_status().unwrap().available_bytes != bytes {
+            assert!(std::time::Instant::now() < deadline, "prefetch did not fill");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn prefetch_tx_matches_ring_and_accounts_for_hits() {
+        let key = [0x42; 32];
+        let mut tx = HomeKitCipherFast::new(key);
+        let mut reference = crate::cipher::HomeKitCipherRing::new(key);
+        for len in [0usize, 1, 63, 64, 65, 8193, 32769] {
+            for target in [0, len / 2, len + 37] {
+                let nonce = HomeKitChaChaNonce(len as u64);
+                tx.reset_prefetch(nonce, target);
+                wait_prefetch(&tx, target);
+                let mut actual: Vec<u8> = (0..len).map(|i| (i * 37) as u8).collect();
+                let mut expected = actual.clone();
+                let tag = tx.encrypt(&mut actual, b"header", nonce).unwrap();
+                assert_eq!(tag, reference.encrypt(&mut expected, b"header", nonce).unwrap());
+                assert_eq!(actual, expected);
+                let stats = tx
+                    .reset_prefetch(HomeKitChaChaNonce(nonce.0 + 1), 0)
+                    .unwrap();
+                assert_eq!(stats.used_bytes, len.min(target));
+                assert_eq!(stats.synchronous_bytes, len.saturating_sub(target));
+                assert_eq!(stats.dropped_bytes, target.saturating_sub(len));
+            }
+        }
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn prefetch_full_and_progressive_match_ring_with_tag_boundaries() {
+        let key = [0x42; 32];
+        let mut rx = HomeKitCipherFast::new(key);
+        let mut tx = crate::cipher::HomeKitCipherRing::new(key);
+        let mut nonce = 0;
+        for len in [0usize, 1, 63, 64, 65, 8193, 32769] {
+            for target in [0, len / 2, len + 37] {
+                for progressive in [false, true] {
+                    for skip_poly in [false, true] {
+                        nonce += 1;
+                        rx.prefer_poly_skip = skip_poly;
+                        let nonce = HomeKitChaChaNonce(nonce);
+                        let aad = nonce.0.to_le_bytes();
+                        let plain: Vec<u8> = (0..len).map(|i| (i * 37) as u8).collect();
+                        let mut wire = plain.clone();
+                        let tag = tx.encrypt(&mut wire, &aad, nonce).unwrap();
+                        let mut fast_tx = plain.clone();
+                        assert_eq!(rx.encrypt(&mut fast_tx, &aad, nonce).unwrap(), tag);
+                        assert_eq!(fast_tx, wire);
+                        wire.extend_from_slice(&tag);
+                        rx.reset_prefetch(nonce, target);
+                        wait_prefetch(&rx, target);
+                        if progressive {
+                            let total = wire.len();
+                            let mut consumed = 0;
+                            let mut ends = vec![1, 15, 17, 63, 64, 65, total - 1, total];
+                            ends.retain(|&e| e <= total);
+                            ends.sort_unstable();
+                            ends.dedup();
+                            for end in ends {
+                                consumed += rx
+                                    .decrypt_progressive(&mut wire[..end], &aad, nonce, consumed, end, total)
+                                    .unwrap()
+                                    .len();
+                            }
+                            assert_eq!(consumed, len);
+                        } else {
+                            assert_eq!(rx.decrypt(&mut wire, &aad, nonce).unwrap(), plain);
+                        }
+                        assert_eq!(&wire[..len], &plain);
+                        let stats = rx
+                            .reset_prefetch(HomeKitChaChaNonce(nonce.0 + 1), 0)
+                            .unwrap();
+                        assert_eq!(stats.generated_bytes, target);
+                        assert_eq!(stats.used_bytes, target.min(len));
+                        assert_eq!(stats.synchronous_bytes, len.saturating_sub(target));
+                        assert_eq!(stats.dropped_bytes, target.saturating_sub(len));
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn prefetch_bad_tag_abort_and_unpredicted_nonce() {
+        let key = [0x27; 32];
+        let mut tx = crate::cipher::HomeKitCipherRing::new(key);
+        let mut rx = HomeKitCipherFast::new(key);
+        let plain = [0x7b; 137];
+        for (predicted, actual, bad_tag) in [(9, 9, true), (10, 10, false), (11, 12, false)] {
+            let mut wire = plain.to_vec();
+            let tag = tx
+                .encrypt(&mut wire, b"header", HomeKitChaChaNonce(actual))
+                .unwrap();
+            wire.extend_from_slice(&tag);
+            if bad_tag {
+                *wire.last_mut().unwrap() ^= 1;
+            }
+            rx.reset_prefetch(HomeKitChaChaNonce(predicted), 201);
+            wait_prefetch(&rx, 201);
+            let total = wire.len();
+            rx.decrypt_progressive(&mut wire, b"header", HomeKitChaChaNonce(actual), 0, 65, total)
+                .unwrap();
+            let result = rx.decrypt_progressive(&mut wire, b"header", HomeKitChaChaNonce(actual), 65, total, total);
+            if bad_tag {
+                assert!(matches!(result, Err(HomeKitCipherError::InvalidSignature)));
+            } else {
+                result.unwrap();
+                assert_eq!(&wire[..plain.len()], &plain);
+            }
+            let stats = rx
+                .reset_prefetch(HomeKitChaChaNonce(actual + 1), 0)
+                .unwrap();
+            assert!(rx.progressive_tag_state.is_none());
+            assert_eq!(stats.used_bytes, if predicted == actual { plain.len() } else { 0 });
+        }
+        rx.reset_prefetch(HomeKitChaChaNonce(50), 0);
+        let mut data = [0; 32];
+        assert!(matches!(
+            rx.decrypt_progressive(&mut data, b"", HomeKitChaChaNonce(50), 0, 1, 1),
+            Err(HomeKitCipherError::PayloadTooSmall)
+        ));
+    }
+
+    #[test]
+    fn poly_skip_accepts_invalid_tag_for_full_and_progressive_rx_but_preserves_tx() {
+        let key = [0x42; 32];
+        let aad = b"screen-header";
+        let nonce = HomeKitChaChaNonce(12);
+        let plaintext: Vec<u8> = (0..160).collect();
+        let mut cipher = HomeKitCipherFast::new(key);
+        cipher.set_prefer_poly_skip();
+        let mut ciphertext = plaintext.clone();
+        let tag = cipher.encrypt(&mut ciphertext, aad, nonce).unwrap();
+        ciphertext.extend_from_slice(&tag);
+
+        let mut ring = crate::cipher::HomeKitCipherRing::new(key);
+        assert_eq!(ring.decrypt(&mut ciphertext.clone(), aad, nonce).unwrap(), plaintext);
+        *ciphertext.last_mut().unwrap() ^= 1;
+        assert!(
+            HomeKitCipherFast::new(key)
+                .decrypt(&mut ciphertext.clone(), aad, nonce)
+                .is_err()
+        );
+        assert_eq!(cipher.decrypt(&mut ciphertext.clone(), aad, nonce).unwrap(), plaintext);
+
+        let total = ciphertext.len();
+        let mut start = 0;
+        for end in [5, 37, 73, 143, total] {
+            cipher
+                .decrypt_progressive(&mut ciphertext, aad, nonce, start, end, total)
+                .unwrap();
+            assert!(cipher.progressive_tag_state.is_none());
+            start = end;
+        }
+        assert_eq!(&ciphertext[..plaintext.len()], plaintext);
+    }
 
     #[test]
     fn decrypt_progressive_short_non_final_chunk_is_noop() {

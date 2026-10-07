@@ -330,7 +330,7 @@ impl PairVerify {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use std::panic;
 

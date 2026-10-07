@@ -1,6 +1,9 @@
 #![allow(clippy::useless_conversion)]
 use core::mem;
 use core::ptr;
+use core::sync::atomic::{AtomicBool, Ordering};
+
+use crate::xor_cipher::xor;
 
 const AES_BLOCK: usize = 16;
 const AFALG_ZERO_COPY_PAGES: usize = 16;
@@ -48,6 +51,9 @@ const ALG_SET_KEY: libc::c_int = 1;
 const ALG_SET_IV: libc::c_int = 2;
 const ALG_SET_OP: libc::c_int = 3;
 const ALG_OP_ENCRYPT: u32 = 1;
+const ALG_OP_KEYSTREAM_ONLY: u32 = 2;
+static REPORTED_KEYSTREAM_MODE: AtomicBool = AtomicBool::new(false);
+static PREFER_KEYSTREAM_GENERATION: AtomicBool = AtomicBool::new(true);
 
 // struct sockaddr_alg from linux/if_alg.h
 #[repr(C)]
@@ -80,6 +86,7 @@ pub struct AfAlgCtrAes128 {
     stream_pos: u128,
     pending_keystream: [u8; AES_BLOCK],
     pending_len: usize,
+    keystream_only: bool,
 }
 
 impl AfAlgCtrAes128 {
@@ -133,14 +140,27 @@ impl AfAlgCtrAes128 {
             return Err(last_errno());
         }
 
-        let op_raw = unsafe { libc::accept4(tfm_fd.as_raw_fd(), ptr::null_mut(), ptr::null_mut(), libc::SOCK_CLOEXEC) };
-
-        if op_raw < 0 {
-            return Err(last_errno());
+        let candidate = accept_op_fd(tfm_fd.as_raw_fd())?;
+        set_nonblocking(candidate.as_raw_fd())?;
+        let prefer_keystream_generation = PREFER_KEYSTREAM_GENERATION.load(Ordering::Relaxed);
+        let (op_fd, keystream_only, pending_keystream, pending_len) = if !prefer_keystream_generation {
+            (candidate, false, [0; AES_BLOCK], 0)
+        } else {
+            match probe_keystream_only(candidate.as_raw_fd(), iv) {
+                Ok(first_block) => (candidate, true, first_block, AES_BLOCK),
+                Err(AfAlgError::Sys(errno)) if keystream_mode_unsupported(errno) => {
+                    report_keystream_mode(false, Some(errno));
+                    drop(candidate);
+                    let fallback = accept_op_fd(tfm_fd.as_raw_fd())?;
+                    set_nonblocking(fallback.as_raw_fd())?;
+                    (fallback, false, [0; AES_BLOCK], 0)
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        if keystream_only {
+            report_keystream_mode(true, None);
         }
-
-        let op_fd = unsafe { OwnedFd::from_raw_fd(op_raw) };
-        set_nonblocking(op_fd.as_raw_fd())?;
 
         let splice_chunk = afalg_zero_copy_chunk_len();
         let (pipe_rd, pipe_wr) = create_splice_pipe();
@@ -153,8 +173,9 @@ impl AfAlgCtrAes128 {
             splice_chunk,
             initial_iv: *iv,
             stream_pos: 0,
-            pending_keystream: [0u8; AES_BLOCK],
-            pending_len: 0,
+            pending_keystream,
+            pending_len,
+            keystream_only,
         })
     }
 
@@ -172,7 +193,7 @@ impl AfAlgCtrAes128 {
 
         if self.pending_len > 0 {
             let take = self.pending_len.min(data.len());
-            xor_with_keystream(&mut data[..take], &self.pending_keystream[..take]);
+            xor(&mut data[..take], &self.pending_keystream[..take]);
             offset += take;
             self.stream_pos = self
                 .stream_pos
@@ -197,6 +218,8 @@ impl AfAlgCtrAes128 {
             let block_index = self.stream_pos / AES_BLOCK as u128;
             let iv = iv_add_be128(self.initial_iv, block_index);
 
+            // Non-zero input data is transformed directly by AF_ALG. The
+            // keystream-only operation is reserved for raw stream generation.
             self.crypt_in_place(iv, &mut remaining[..full_len])?;
             self.stream_pos = self
                 .stream_pos
@@ -212,7 +235,6 @@ impl AfAlgCtrAes128 {
             let tail = &mut remaining[full_len..];
 
             self.crypt_slices(&iv, &[tail, &zero_pad[..AES_BLOCK - tail_len]], &mut output)?;
-
             tail.copy_from_slice(&output[..tail_len]);
             self.pending_keystream[..AES_BLOCK - tail_len].copy_from_slice(&output[tail_len..]);
             self.pending_len = AES_BLOCK - tail_len;
@@ -224,6 +246,78 @@ impl AfAlgCtrAes128 {
         }
 
         Ok(())
+    }
+
+    pub fn try_generate_keystream(&mut self, output: &mut [u8]) -> Result<()> {
+        if output.is_empty() {
+            return Ok(());
+        }
+
+        let mut offset = 0usize;
+        if self.pending_len > 0 {
+            let take = self.pending_len.min(output.len());
+            output[..take].copy_from_slice(&self.pending_keystream[..take]);
+            offset += take;
+            self.stream_pos = self
+                .stream_pos
+                .checked_add(take as u128)
+                .expect("AES-CTR stream position overflow");
+            if take < self.pending_len {
+                self.pending_keystream
+                    .copy_within(take..self.pending_len, 0);
+                self.pending_len -= take;
+                return Ok(());
+            }
+            self.pending_len = 0;
+        }
+
+        let remaining = &mut output[offset..];
+        let full_len = remaining.len() / AES_BLOCK * AES_BLOCK;
+        let tail_len = remaining.len() - full_len;
+        if full_len > 0 {
+            let block_index = self.stream_pos / AES_BLOCK as u128;
+            let iv = iv_add_be128(self.initial_iv, block_index);
+            if self.keystream_only {
+                self.request_keystream(&iv, &mut remaining[..full_len])?;
+            } else {
+                remaining[..full_len].fill(0);
+                self.crypt_in_place(iv, &mut remaining[..full_len])?;
+            }
+            self.stream_pos = self
+                .stream_pos
+                .checked_add(full_len as u128)
+                .expect("AES-CTR stream position overflow");
+        }
+
+        if tail_len > 0 {
+            let block_index = self.stream_pos / AES_BLOCK as u128;
+            let iv = iv_add_be128(self.initial_iv, block_index);
+            let mut block = [0u8; AES_BLOCK];
+            if self.keystream_only {
+                self.request_keystream(&iv, &mut block)?;
+            } else {
+                self.crypt_in_place(iv, &mut block)?;
+            }
+            remaining[full_len..].copy_from_slice(&block[..tail_len]);
+            self.pending_keystream[..AES_BLOCK - tail_len].copy_from_slice(&block[tail_len..]);
+            self.pending_len = AES_BLOCK - tail_len;
+            self.stream_pos = self
+                .stream_pos
+                .checked_add(tail_len as u128)
+                .expect("AES-CTR stream position overflow");
+        }
+
+        Ok(())
+    }
+
+    fn request_keystream(&mut self, iv: &[u8; AES_BLOCK], output: &mut [u8]) -> Result<()> {
+        if output.is_empty() || !output.len().is_multiple_of(AES_BLOCK) {
+            return Err(AfAlgError::InvalidInput);
+        }
+        unsafe {
+            send_afalg_skcipher_control(self.op_fd.as_raw_fd(), iv, ALG_OP_KEYSTREAM_ONLY, 0)?;
+        }
+        read_exact_fd(self.op_fd.as_raw_fd(), output)
     }
 
     pub fn crypt_in_place(&mut self, iv: [u8; 16], data: &mut [u8]) -> Result<()> {
@@ -256,7 +350,7 @@ impl AfAlgCtrAes128 {
                 let zero_block = [0u8; AES_BLOCK];
 
                 self.crypt_slices(&partial_block_iv, &[&zero_block], &mut keystream)?;
-                xor_with_keystream(&mut remaining[..partial_len], &keystream[within_block..within_block + partial_len]);
+                xor(&mut remaining[..partial_len], &keystream[within_block..within_block + partial_len]);
                 byte_offset = byte_offset
                     .checked_add(partial_len)
                     .expect("AES-CTR byte offset overflow");
@@ -325,6 +419,12 @@ pub struct Aes128CtrKernelStream {
 }
 
 impl Aes128CtrKernelStream {
+    /// Select raw AF_ALG keystream generation for subsequently created streams.
+    /// Call before constructing any streams; existing streams keep their mode.
+    pub fn set_prefer_keystream_generation(prefer: bool) {
+        PREFER_KEYSTREAM_GENERATION.store(prefer, Ordering::Relaxed);
+    }
+
     pub fn new(key: &[u8; 16], iv: &[u8; 16]) -> Result<Self> {
         Ok(Self {
             inner: AfAlgCtrAes128::try_new(key, iv)?,
@@ -335,21 +435,21 @@ impl Aes128CtrKernelStream {
         self.inner.stream_pos()
     }
 
+    pub fn uses_keystream_only(&self) -> bool {
+        self.inner.keystream_only
+    }
+
     pub fn apply_keystream(&mut self, data: &mut [u8]) -> Result<()> {
         self.inner.try_apply_keystream(data)
+    }
+
+    pub fn generate_keystream(&mut self, output: &mut [u8]) -> Result<()> {
+        self.inner.try_generate_keystream(output)
     }
 
     #[cfg(test)]
     fn set_splice_chunk_for_test(&mut self, splice_chunk: usize) {
         self.inner.splice_chunk = splice_chunk;
-    }
-}
-
-fn xor_with_keystream(data: &mut [u8], keystream: &[u8]) {
-    debug_assert_eq!(data.len(), keystream.len());
-
-    for (dst, ks) in data.iter_mut().zip(keystream.iter()) {
-        *dst ^= *ks;
     }
 }
 
@@ -421,7 +521,7 @@ unsafe fn send_afalg_skcipher_request_splice_once(
     }
 
     unsafe {
-        send_afalg_skcipher_control(fd, iv, libc::MSG_MORE)?;
+        send_afalg_skcipher_control(fd, iv, ALG_OP_ENCRYPT, libc::MSG_MORE)?;
     }
 
     let iov = libc::iovec {
@@ -475,7 +575,7 @@ unsafe fn send_afalg_skcipher_request_splice_once(
     Ok(drained)
 }
 
-unsafe fn send_afalg_skcipher_control(fd: RawFd, iv: &[u8; 16], flags: libc::c_int) -> Result<()> {
+unsafe fn send_afalg_skcipher_control(fd: RawFd, iv: &[u8; 16], operation: u32, flags: libc::c_int) -> Result<()> {
     let op_cmsg_len = mem::size_of::<u32>();
     let iv_payload_len = mem::size_of::<AfAlgIv>() + iv.len();
 
@@ -507,7 +607,7 @@ unsafe fn send_afalg_skcipher_control(fd: RawFd, iv: &[u8; 16], flags: libc::c_i
             .map_err(|_| AfAlgError::InvalidInput)?;
     }
 
-    let op = ALG_OP_ENCRYPT.to_ne_bytes();
+    let op = operation.to_ne_bytes();
     unsafe {
         ptr::copy_nonoverlapping(op.as_ptr(), libc::CMSG_DATA(cmsg1), op.len());
     }
@@ -538,6 +638,39 @@ unsafe fn send_afalg_skcipher_control(fd: RawFd, iv: &[u8; 16], flags: libc::c_i
     }
 
     Ok(())
+}
+
+fn accept_op_fd(tfm_fd: RawFd) -> Result<OwnedFd> {
+    let op_raw = unsafe { libc::accept4(tfm_fd, ptr::null_mut(), ptr::null_mut(), libc::SOCK_CLOEXEC) };
+    if op_raw < 0 {
+        return Err(last_errno());
+    }
+    Ok(unsafe { OwnedFd::from_raw_fd(op_raw) })
+}
+
+fn probe_keystream_only(fd: RawFd, iv: &[u8; AES_BLOCK]) -> Result<[u8; AES_BLOCK]> {
+    let mut first_block = [0u8; AES_BLOCK];
+    unsafe {
+        send_afalg_skcipher_control(fd, iv, ALG_OP_KEYSTREAM_ONLY, 0)?;
+    }
+    read_exact_fd(fd, &mut first_block)?;
+    Ok(first_block)
+}
+
+fn keystream_mode_unsupported(errno: i32) -> bool {
+    errno == libc::EINVAL || errno == libc::EOPNOTSUPP || errno == libc::ENOSYS
+}
+
+fn report_keystream_mode(enabled: bool, reason: Option<i32>) {
+    if REPORTED_KEYSTREAM_MODE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    if !enabled {
+        log::warn!(
+            "AF_ALG keystream-only unsupported (errno={}); falling back to legacy encrypt/XOR",
+            reason.unwrap_or(0)
+        );
+    }
 }
 
 unsafe fn send_afalg_skcipher_request_vectored_once(fd: RawFd, iv: &[u8; 16], inputs: &[&[u8]]) -> Result<usize> {
@@ -777,6 +910,25 @@ mod tests {
         cipher.apply_keystream(&mut data).unwrap();
 
         assert_eq!(data, expected);
+    }
+
+    #[test]
+    fn afalg_keystream_generation_overwrites_output_then_continues_apply() {
+        let mut kernel = Aes128CtrKernelStream::new(&KEY, &IV).expect("AF_ALG ctr(aes) init failed");
+        let mut soft = Aes128CtrSoft::new(&KEY, &IV);
+
+        let mut actual_keystream = [0xa5; 64];
+        let mut expected_keystream = [0; 64];
+        kernel.generate_keystream(&mut actual_keystream).unwrap();
+        soft.apply_keystream(&mut expected_keystream);
+        assert_eq!(actual_keystream, expected_keystream);
+
+        let mut actual_data = [0x5a; 37];
+        let mut expected_data = actual_data;
+        kernel.apply_keystream(&mut actual_data).unwrap();
+        soft.apply_keystream(&mut expected_data);
+        assert_eq!(actual_data, expected_data);
+        assert_eq!(kernel.stream_pos(), 101);
     }
 
     #[test]

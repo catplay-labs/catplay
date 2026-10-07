@@ -65,8 +65,8 @@ impl ScreenFrameCodec {
 
     pub fn aes(session_key: [u8; 16], stream_connection_id: u64) -> Self {
         let (video_key, video_iv) = derive_aes_stream_keys(&session_key, stream_connection_id);
-        let read_cipher = Aes128Ctr::new(&video_key, &video_iv);
-        let write_cipher = Aes128Ctr::new(&video_key, &video_iv);
+        let read_cipher = Aes128Ctr::new(&video_key, &video_iv, 0);
+        let write_cipher = Aes128Ctr::new(&video_key, &video_iv, 0);
 
         Self {
             header: None,

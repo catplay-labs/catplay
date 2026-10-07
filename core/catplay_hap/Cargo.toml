@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 catplay_mfi = { path = "../catplay_mfi" }
 catplay_tracing = { path = "../catplay_tracing" }
-catplay_tracing_macro = { path = "../catplay_tracing_macro" }
+catplay_tracing_macro = { path = "../catplay_tracing_macro", default-features = false }
 catplay_util = { path = "../catplay_util", optional = true }
 
 # Db serializer
@@ -67,6 +67,11 @@ rand = "0.9.1"
 [build-dependencies]
 cc = "1.0"
 
+[[bin]]
+name = "profile_pair_setup"
+path = "src/bin/profile_pair_setup.rs"
+required-features = ["std"]
+
 [[bench]]
 name = "pair_setup"
 harness = false
@@ -81,28 +86,34 @@ harness = false
 required-features = ["openssl"]
 
 [[bench]]
+name = "aes_ctr_prefetch"
+harness = false
+required-features = ["std"]
+
+[[bench]]
+name = "chacha_prefetch"
+harness = false
+required-features = ["std"]
+
+[[bench]]
 name = "fast_chacha20_compare"
 harness = false
 
 [[test]]
 name = "fast_chacha20_is_using_asm"
 path = "tests/fast_chacha20/is_using_asm.rs"
-harness = false
 
 [[test]]
 name = "fast_chacha20_rfc7539"
 path = "tests/fast_chacha20/rfc7539.rs"
-harness = false
 
 [[test]]
 name = "fast_poly1305_poly1305"
 path = "tests/fast_poly1305/poly1305.rs"
-harness = false
 
 [[test]]
 name = "cipher_test"
 path = "tests/cipher/cipher_test.rs"
-harness = false
 
 [profile.release]
 debug = true

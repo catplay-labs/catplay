@@ -88,7 +88,7 @@ fn quarter_round(state: &mut [u32], a: usize, b: usize, c: usize, d: usize) {
 /// * `double_rounds` - Number of double rounds (each double round is 2 rounds, standard is 10).
 ///
 /// # Panics
-/// Panics if `data` is longer than 64 bytes, or if `keystream_only` is true and `data.len() != 64`.
+/// Panics if `data` is longer than 64 bytes, (both XOR and direct keystream output support partial blocks).
 ///
 /// # Example
 /// ```rust
@@ -100,9 +100,6 @@ fn quarter_round(state: &mut [u32], a: usize, b: usize, c: usize, d: usize) {
 /// ```
 pub fn xor(data: &mut [u8], keystream_only: bool, key: &[u32; 8], counter: &[u32; 4], double_rounds: usize) {
     debug_assert!(data.len() <= 64, "Data length must not exceed 64 bytes");
-    if keystream_only {
-        debug_assert_eq!(data.len(), 64);
-    }
 
     // State initialization: 4 constant words, 8 key words, 4 counter/nonce words
     let state = [

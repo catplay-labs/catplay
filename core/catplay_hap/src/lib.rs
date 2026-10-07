@@ -5,10 +5,12 @@ extern crate alloc;
 pub mod cipher;
 
 mod backend;
+pub mod prefetch;
 #[cfg(any(test, not(feature = "openssl")))]
 mod ring_sha512;
 mod ring_util;
 mod storage;
+mod xor_cipher;
 
 pub use backend::*;
 #[cfg(any(test, not(feature = "openssl")))]

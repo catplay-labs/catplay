@@ -247,7 +247,20 @@ impl FastChaCha20 {
         if data.is_empty() {
             return;
         }
-        // Avoid aliasing mutable and immutable borrows by splitting the slice
+        // The MIPS o32 and RV32 backends accept null input for raw keystream.
+        #[cfg(all(fast_chacha_asm, target_os = "linux", any(target_arch = "mips", target_arch = "riscv32")))]
+        unsafe {
+            ChaCha20_ctr32(
+                data.as_mut_ptr(),
+                core::ptr::null(),
+                data.len(),
+                self.key_words.as_ptr(),
+                self.counter.as_ptr(),
+            );
+            // ASM keeps its counter local, unlike the Rust implementation.
+            self.counter[0] = self.counter[0].wrapping_add(data.len().div_ceil(64) as u32);
+        }
+        #[cfg(not(all(fast_chacha_asm, target_os = "linux", any(target_arch = "mips", target_arch = "riscv32"))))]
         fallback(data, data.len(), true, &self.key_words, &mut self.counter, 10);
     }
 
@@ -343,4 +356,42 @@ pub fn is_asm_available_chacha20() -> bool {
         ChaCha20_ctr32(dummy_ptr, dummy_ptr, 0, dummy_ptr as *const u32, dummy_ptr as *const u32);
     }
     !FALLBACK_TRIGGERED.load(Ordering::SeqCst)
+}
+
+#[cfg(test)]
+mod keystream_tests {
+    use super::*;
+    use chacha20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
+
+    #[test]
+    fn direct_keystream_overwrites_aligned_unaligned_and_partial_buffers() {
+        // RustCrypto reserves its terminal block; stay below that boundary.
+        for counter in [0, 1, 71, u32::MAX - 2] {
+            for len in [0usize, 1, 3, 4, 63, 64, 65, 127] {
+                for align in 0..4 {
+                    let key = [0x37; 32];
+                    let nonce = [0x65; 12];
+                    let mut direct = FastChaCha20::new_with_counter(key, nonce, counter);
+                    let mut pure = direct.clone();
+                    let mut guarded = vec![0xaa; len + 8];
+                    direct.keystream_only(&mut guarded[align..align + len]);
+                    let mut expected = vec![0; len];
+                    let mut reference = chacha20::ChaCha20::new((&key).into(), (&nonce).into());
+                    reference.seek(u64::from(counter) * 64);
+                    reference.apply_keystream(&mut expected);
+                    assert_eq!(&guarded[align..align + len], expected);
+                    assert!(
+                        guarded[..align]
+                            .iter()
+                            .chain(&guarded[align + len..])
+                            .all(|&b| b == 0xaa)
+                    );
+                    let mut soft = vec![0x55; len];
+                    fallback(&mut soft, len, true, &pure.key_words, &mut pure.counter, 10);
+                    assert_eq!(soft, expected);
+                    assert_eq!(direct.counter, pure.counter);
+                }
+            }
+        }
+    }
 }
