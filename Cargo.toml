@@ -15,6 +15,7 @@ members = [
     "core/catplay_util",
     "core/catplay_path",
     "core/catplay_reflect",
+    "core/catplay_lingo",
     "core/catplay_plist",
 
     "c2a/catplay_c2a",

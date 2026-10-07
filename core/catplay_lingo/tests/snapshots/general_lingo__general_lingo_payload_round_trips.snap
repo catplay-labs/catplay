@@ -1,0 +1,335 @@
+---
+source: core/catplay_lingo/tests/general_lingo.rs
+expression: snapshots
+---
+[
+    TestSnapshot {
+        case: "identify device lingoes",
+        message: General.IdentifyDeviceLingoes {
+            deviceLingoesSpoken: GENERAL | SIMPLE_REMOTE,
+            options: IdentifyDeviceLingoesOptions {
+                authentication_control_bits: ImmediateAuthentication,
+                power_control_bits: LowPower,
+                reserved_bits: 0,
+            },
+            deviceID: 512,
+        },
+        bytes: [
+            0,
+            0,
+            0,
+            5,
+            0,
+            0,
+            0,
+            2,
+            0,
+            0,
+            2,
+            0,
+        ],
+    },
+    TestSnapshot {
+        case: "fixed-size authentication challenge",
+        message: General.GetAccessoryAuthenticationSignature {
+            challenge: Some(
+                Value16ByteChallenge(
+                    [
+                        0,
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        6,
+                        7,
+                        8,
+                        9,
+                        10,
+                        11,
+                        12,
+                        13,
+                        14,
+                        15,
+                    ],
+                ),
+            ),
+            authenticationRetryCounter: Some(
+                2,
+            ),
+        },
+        bytes: [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            2,
+        ],
+    },
+    TestSnapshot {
+        case: "FID token values",
+        message: General.SetFIDTokenValues {
+            numFIDTokenValues: 2,
+            tokens: [
+                IdentifyToken {
+                    numLingoes: 2,
+                    accessoryLingoes: [
+                        0,
+                        2,
+                    ],
+                    options: SetFIDTokenValuesTokensIdentifyTokenOptions {
+                        authentication_control_bits: ImmediateAuthentication,
+                        power_control_bits: LowPower,
+                        reserved_bits: 0,
+                    },
+                    deviceID: 512,
+                },
+                AccessoryCapsToken {
+                    accCaps: (empty),
+                },
+            ],
+        },
+        bytes: [
+            2,
+            13,
+            0,
+            0,
+            2,
+            0,
+            2,
+            0,
+            0,
+            0,
+            2,
+            0,
+            0,
+            2,
+            0,
+            10,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+    },
+    TestSnapshot {
+        case: "FID token acknowledgement",
+        message: General.AckFIDTokenValues {
+            numFIDTokenValueACKs: 1,
+            tokenACKs: [
+                IdentifyToken {
+                    ackStatus: Accepted,
+                    busyLingoes: None,
+                },
+            ],
+        },
+        bytes: [
+            1,
+            3,
+            0,
+            0,
+            0,
+        ],
+    },
+    TestSnapshot {
+        case: "open authentication status enum",
+        message: General.AckAccessoryAuthenticationStatus {
+            status: Other(
+                10,
+            ),
+        },
+        bytes: [
+            10,
+        ],
+    },
+    TestSnapshot {
+        case: "16-byte challenge, zero length hint, maximum retry counter",
+        message: General.GetAccessoryAuthenticationSignature {
+            challenge: Some(
+                Value16ByteChallenge(
+                    [
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                    ],
+                ),
+            ),
+            authenticationRetryCounter: Some(
+                255,
+            ),
+        },
+        bytes: [
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            255,
+        ],
+    },
+    TestSnapshot {
+        case: "20-byte challenge, zero length hint, maximum retry counter",
+        message: General.GetAccessoryAuthenticationSignature {
+            challenge: Some(
+                Value20ByteChallenge(
+                    [
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                        165,
+                    ],
+                ),
+            ),
+            authenticationRetryCounter: Some(
+                255,
+            ),
+        },
+        bytes: [
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            165,
+            255,
+        ],
+    },
+    TestSnapshot {
+        case: "ContextButtonStatus: mandatory byte only",
+        message: SimpleRemote.ContextButtonStatus {
+            buttonStates0: PLAY_PAUSE,
+            buttonStates1: None,
+            buttonStates2: None,
+            buttonStates3: None,
+        },
+        bytes: [
+            1,
+        ],
+    },
+    TestSnapshot {
+        case: "ContextButtonStatus: first optional byte",
+        message: SimpleRemote.ContextButtonStatus {
+            buttonStates0: PLAY_PAUSE,
+            buttonStates1: Some(
+                PAUSE,
+            ),
+            buttonStates2: None,
+            buttonStates3: None,
+        },
+        bytes: [
+            1,
+            2,
+        ],
+    },
+    TestSnapshot {
+        case: "ContextButtonStatus: two optional bytes",
+        message: SimpleRemote.ContextButtonStatus {
+            buttonStates0: PLAY_PAUSE,
+            buttonStates1: Some(
+                PAUSE,
+            ),
+            buttonStates2: Some(
+                POWER_OFF,
+            ),
+            buttonStates3: None,
+        },
+        bytes: [
+            1,
+            2,
+            4,
+        ],
+    },
+    TestSnapshot {
+        case: "ContextButtonStatus: all optional bytes",
+        message: SimpleRemote.ContextButtonStatus {
+            buttonStates0: PLAY_PAUSE,
+            buttonStates1: Some(
+                PAUSE,
+            ),
+            buttonStates2: Some(
+                POWER_OFF,
+            ),
+            buttonStates3: Some(
+                BIT_3,
+            ),
+        },
+        bytes: [
+            1,
+            2,
+            4,
+            8,
+        ],
+    },
+]

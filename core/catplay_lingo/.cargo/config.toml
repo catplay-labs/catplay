@@ -1,0 +1,2 @@
+[alias]
+regenerate-iap1-schema = "run -p catplay_lingo --features generator --bin catplay_lingo -- codegen/Default.lktspec"
