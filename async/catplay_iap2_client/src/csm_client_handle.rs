@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::{CsmRemote, CsmSessionResult, CsmSessionStatus};
 use catplay_csm::decoder::{AsCsmPacket, CsmPacketBox};
+use catplay_lingo::wire::Outgoing;
 
 pub trait CsmClientHandle: Send + Sync {
     /// For Bluetooth transport, this closes the RFCOMM connection.
@@ -18,6 +19,9 @@ pub trait CsmClientHandle: Send + Sync {
 
     /// Checks if channel if closed.
     fn is_closed(&self) -> bool;
+
+    /// Is this link downgraded to iAP1.
+    fn is_downgrade(&self) -> bool;
 
     /// Checks if channel is writable.
     ///
@@ -40,6 +44,19 @@ pub trait CsmClientHandle: Send + Sync {
 
     /// Sends multiple packets.
     fn send_all(&self, packets: &[CsmPacketBox]) -> CsmSessionResult<()>;
+
+    /// Queue one typed iAP1 message while the link is in downgrade mode.
+    fn send_lingo(&self, _outgoing: Outgoing) -> CsmSessionResult<()> {
+        Err("iAP1 sending is unavailable on this client handle".into())
+    }
+
+    /// Release a locally tracked iAP1 transaction after the session accepts its reply.
+    fn finish_lingo_transaction(&self, _id: u16) {}
+
+    /// Count locally tracked iAP1 transactions, if this handle supports iAP1.
+    fn pending_lingo_transaction_count(&self) -> Option<usize> {
+        None
+    }
 
     fn send_file_reserve(&self) -> Option<u8>;
 

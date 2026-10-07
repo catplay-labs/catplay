@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 catplay_csm = { path = "../../core/catplay_csm" }
 catplay_iap2_link = { path = "../../core/catplay_iap2_link" }
+catplay_lingo = { path = "../../core/catplay_lingo" }
 catplay_mfi = { path = "../../core/catplay_mfi", optional = true }
 catplay_util = { path = "../../core/catplay_util" }
 

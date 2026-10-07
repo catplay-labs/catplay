@@ -30,6 +30,12 @@ pub enum CsmSessionError {
     #[error("Failed to encode/decode packet: {0}")]
     PacketCoder(#[from] PacketCoderError),
 
+    #[error("iAP1 transaction error: {0}")]
+    LingoTransaction(#[from] catplay_lingo::transaction_helper::TransactionError),
+
+    #[error("iAP1 codec error: {0}")]
+    LingoCodec(#[from] catplay_lingo::RegisteredError),
+
     #[error("Packet transmit drain has been closed/dropped")]
     DrainClosed,
 }

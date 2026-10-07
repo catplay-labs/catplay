@@ -10,8 +10,12 @@ use catplay_iap2_link::{
     LinkEvent, LinkLayer, LinkStatus, PacketCoder, PacketFrame,
     files::{FileTransferEvent, FileTransferOutgoingSource, FileTransferReserved},
 };
+use catplay_lingo::{
+    link_layer::LinkLayer as LingoLinkLayer,
+    wire::{Frame as LingoFrame, Outgoing},
+};
 use catplay_util::{AsyncShutdown, EventReconciler, EventSleeper, deadline_maybe, mpsc, notify::Notify, oneshot};
-use log::{debug, trace};
+use log::{debug, trace, warn};
 
 use crate::{
     CsmClient, CsmClientHandle, CsmClientHandleRef, CsmFileTransferEvent, CsmRemote, CsmSession, CsmSessionBox, CsmSessionError,
@@ -32,6 +36,7 @@ pub struct AsyncClient {
     server: bool,
     remote: CsmRemote,
     link: Arc<Mutex<LinkLayer>>,
+    lingo: Arc<Mutex<LingoLinkLayer>>,
 
     coder: PacketCoder,
 
@@ -65,6 +70,7 @@ pub struct AsyncHandle {
     notify: Notify,
     status: Arc<Mutex<CsmSessionStatus>>,
     link: Arc<Mutex<LinkLayer>>,
+    lingo: Arc<Mutex<LingoLinkLayer>>,
 }
 
 impl CsmClientHandle for AsyncHandle {
@@ -93,6 +99,10 @@ impl CsmClientHandle for AsyncHandle {
         self.status.lock().unwrap().clone()
     }
 
+    fn is_downgrade(&self) -> bool {
+        let status = *self.link.lock().unwrap().status();
+        matches!(status, LinkStatus::Downgrade)
+    }
     fn is_writable(&self) -> bool {
         // let status = *self.link.lock().unwrap().status();
         // matches!(status, LinkStatus::Writable)
@@ -108,7 +118,7 @@ impl CsmClientHandle for AsyncHandle {
         // }
 
         #[cfg(debug_assertions)]
-        trace!("Writing CSM: -> {:?}", packet.as_csm());
+        debug!("Writing CSM: -> {:?}", packet.as_csm());
 
         match registry.encode(packet) {
             Ok(d) => {
@@ -132,6 +142,30 @@ impl CsmClientHandle for AsyncHandle {
             self.send(packet)?;
         }
         Ok(())
+    }
+
+    fn send_lingo(&self, outgoing: Outgoing) -> CsmSessionResult<()> {
+        let mut link = self.link.lock().unwrap();
+        if !link.is_downgrade() {
+            return Err("iAP1 message requires a downgraded link".into());
+        }
+        let packet = self.lingo.lock().unwrap().send(outgoing)?;
+        link.lingo().enqueue_tx(packet.encode_body()?);
+        drop(link);
+        self.notify.notify();
+        Ok(())
+    }
+
+    fn finish_lingo_transaction(&self, id: u16) {
+        self.lingo
+            .lock()
+            .unwrap()
+            .transactions_mut()
+            .finish_transaction(id);
+    }
+
+    fn pending_lingo_transaction_count(&self) -> Option<usize> {
+        Some(self.lingo.lock().unwrap().transactions().pending_count())
     }
 
     fn send_file_reserve(&self) -> Option<u8> {
@@ -197,6 +231,7 @@ impl AsyncClient {
         let link = Arc::new(Mutex::new(LinkLayer::new(server, move |ev| {
             let _ = link_events_tx.unbounded_send(ev);
         })));
+        let lingo = Arc::new(Mutex::new(LingoLinkLayer::with_role(server)));
 
         let tx = mpsc::unbounded();
 
@@ -207,6 +242,7 @@ impl AsyncClient {
             notify: notify.clone(),
             status: status.clone(),
             link: link.clone(),
+            lingo: lingo.clone(),
         });
 
         (
@@ -217,6 +253,7 @@ impl AsyncClient {
                 error: None,
                 had_init: false,
                 link,
+                lingo,
                 remote,
                 server,
                 session,
@@ -237,12 +274,20 @@ impl AsyncClient {
         &mut self.session
     }
 
+    /// Switch to iAP1 before the first iAP2 DETECT is transmitted.
+    /// Call this immediately after construction, before reconciling the HID session.
+    pub fn downgrade(&mut self) -> CsmSessionResult<()> {
+        self.link.lock().unwrap().downgrade()?;
+        self.notify.notify();
+        Ok(())
+    }
+
     pub fn read_frame_buf(&mut self, buf: &[u8]) {
         self.rx_buf.extend_from_slice(buf);
 
         while let Ok(Some(packet)) = self.coder.decode(&mut self.rx_buf) {
             #[cfg(debug_assertions)]
-            trace!("Forwarding packet to link handler: <- {packet:?}");
+            debug!("Forwarding packet to link handler: <- {packet:?}");
             self.link.lock().unwrap().read(packet);
             self.notify.notify();
         }
@@ -347,8 +392,30 @@ impl AsyncClient {
         if let Some(p) = { self.link_events_rx.take() } {
             produced_events = true;
             match p {
+                LinkEvent::ReadLegacy(body) => {
+                    let received = {
+                        let mut lingo = self.lingo.lock().unwrap();
+                        match lingo.on_frame(&LingoFrame { body: &body }) {
+                            Ok(packet) => {
+                                let pending = packet
+                                    .transaction_id
+                                    .and_then(|id| lingo.transactions().pending_command(id));
+                                Some((packet, pending))
+                            }
+                            Err(error) => {
+                                warn!("Undecoded iAP1 body {body:02x?}: {error}");
+                                None
+                            }
+                        }
+                    };
+                    if let Some((packet, pending)) = received {
+                        trace!("Received iAP1 message: {:?}", packet.message);
+                        self.session
+                            .on_legacy_message(packet.message, packet.transaction_id, pending, self.handle.clone())
+                            .await?;
+                    }
+                }
                 LinkEvent::ReadCsm(value) => {
-                    #[cfg(debug_assertions)]
                     trace!("Received CSM bytes: {value:?}");
 
                     let registry = CsmPacketRegistry::static_registry();
@@ -357,7 +424,7 @@ impl AsyncClient {
                     };
 
                     #[cfg(debug_assertions)]
-                    trace!("Received CSM: <- {pkt:?}");
+                    debug!("Received CSM: <- {pkt:?}");
                     self.session.respond(pkt, self.handle.clone()).await?;
                 }
                 LinkEvent::Write(packet) => {
@@ -378,10 +445,11 @@ impl AsyncClient {
                 }
                 LinkEvent::Status(link_status) => {
                     debug!("New link status: {link_status:?}");
+                    *self.status.lock().unwrap() = link_status.into();
                     match link_status {
-                        LinkStatus::Writable if !self.had_init => {
+                        LinkStatus::Writable | LinkStatus::Downgrade if !self.had_init => {
                             self.had_init = true;
-                            debug!("Session negotiated!");
+                            debug!("Session starting in {link_status:?} mode");
                             self.session.start(self.handle.clone()).await?;
                         }
                         LinkStatus::Error(err) => {
@@ -391,7 +459,6 @@ impl AsyncClient {
                         _ => {}
                     }
 
-                    *self.status.lock().unwrap() = link_status.into();
                     self.notify.notify();
                 }
                 LinkEvent::FileTransfer(id, file) => {
@@ -419,14 +486,7 @@ impl AsyncClient {
         let allows_tx = self.is_tx_allowed();
 
         let mut link = self.link.lock().unwrap();
-        link.reconcile();
-
-        if allows_tx {
-            trace!("Calling transmit_once");
-            link.transmit_once();
-        } else {
-            trace!("Not calling transmit_once due to TX backlog");
-        }
+        let may_have_more = link.reconcile(usize::from(allows_tx));
 
         // If the session is in final state, return that as an error here.
         if let CsmSessionStatus::Error(err) = self.status.lock().unwrap().clone() {
@@ -435,7 +495,7 @@ impl AsyncClient {
 
         // Don't schedule wake up for retransmissions if we can't transmit, to prevent infinite CPU spin
         self.deadline = link.sleep().filter(|_| allows_tx);
-        Ok(produced_events)
+        Ok(produced_events || (allows_tx && may_have_more))
     }
 }
 

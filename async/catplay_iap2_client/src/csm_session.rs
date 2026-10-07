@@ -6,6 +6,7 @@ use log::debug;
 
 use crate::{CsmClientHandleRef, CsmFileTransferEvent, CsmSessionResult};
 use catplay_csm::decoder::CsmPacketBox;
+use catplay_lingo::{CommandKey, lingos::LingoMessage};
 
 /// Represents an iAP2 CSM session with user logic, which can:
 /// - read CSM messages and return messages to be written as a response
@@ -27,6 +28,17 @@ pub trait CsmSession: Send + Sync + 'static {
     /// An error from this method will be treated as a signal to terminate the session.
     async fn respond(&mut self, packet: CsmPacketBox, handle: CsmClientHandleRef) -> CsmSessionResult<()>;
 
+    /// Called with a decoded iAP1 message in downgrade mode.
+    async fn on_legacy_message(
+        &mut self,
+        _message: LingoMessage,
+        _transaction_id: Option<u16>,
+        _pending_command: Option<CommandKey>,
+        _handle: CsmClientHandleRef,
+    ) -> CsmSessionResult<()> {
+        Ok(())
+    }
+
     async fn on_file_event(&mut self, id: u8, ev: CsmFileTransferEvent, _handle: CsmClientHandleRef) -> CsmSessionResult<()> {
         debug!("on_file_event STUB {id:?} {ev:?}");
         Ok(())
@@ -41,6 +53,18 @@ impl CsmSession for Box<dyn CsmSession> {
 
     async fn respond(&mut self, packet: CsmPacketBox, handle: CsmClientHandleRef) -> CsmSessionResult<()> {
         self.as_mut().respond(packet, handle).await
+    }
+
+    async fn on_legacy_message(
+        &mut self,
+        message: LingoMessage,
+        transaction_id: Option<u16>,
+        pending_command: Option<CommandKey>,
+        handle: CsmClientHandleRef,
+    ) -> CsmSessionResult<()> {
+        self.as_mut()
+            .on_legacy_message(message, transaction_id, pending_command, handle)
+            .await
     }
 
     async fn on_file_event(&mut self, id: u8, ev: CsmFileTransferEvent, handle: CsmClientHandleRef) -> CsmSessionResult<()> {

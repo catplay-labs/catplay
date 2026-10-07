@@ -10,6 +10,7 @@ pub enum CsmSessionStatus {
     Writable,
     Unwritable,
     Recovery,
+    Downgrade,
 
     Error(CsmSessionError),
 }
@@ -32,6 +33,7 @@ impl From<LinkStatus> for CsmSessionStatus {
             LinkStatus::Writable => CsmSessionStatus::Writable,
             LinkStatus::Unwritable => CsmSessionStatus::Unwritable,
             LinkStatus::Recovery => CsmSessionStatus::Recovery,
+            LinkStatus::Downgrade => CsmSessionStatus::Downgrade,
             LinkStatus::Error(err) => CsmSessionStatus::Error(err.into()),
         }
     }
