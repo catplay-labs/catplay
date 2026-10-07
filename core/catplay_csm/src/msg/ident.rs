@@ -53,26 +53,15 @@ impl IdentificationInformation {
     }
 
     pub fn unpack_ids(ids: &CsmByteArray) -> CsmVec<u16> {
-        let mut out = CsmVec::with_capacity(ids.data.len() / 2);
-        let i = 0;
-        while i + 1 < out.len() {
-            let id = u16::from_be_bytes([ids.data[i], ids.data[i + 1]]);
-            out.push(id);
-        }
-
-        out
+        ids.data
+            .chunks_exact(2)
+            .map(|id| u16::from_be_bytes([id[0], id[1]]))
+            .collect()
     }
 
     pub fn has_id(ids: &[u8], id: u16) -> bool {
-        let i = 0;
-        while i + 1 < ids.len() / 2 {
-            let tmp = u16::from_be_bytes([ids[i], ids[i + 1]]);
-            if id == tmp {
-                return true;
-            }
-        }
-
-        false
+        ids.chunks_exact(2)
+            .any(|tmp| u16::from_be_bytes([tmp[0], tmp[1]]) == id)
     }
 
     pub fn wants_rx(&self, id: u16) -> bool {
