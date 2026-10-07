@@ -1,0 +1,2 @@
+[alias]
+regenerate-iap2-schema = "run --example schemagen -- --regenerate"

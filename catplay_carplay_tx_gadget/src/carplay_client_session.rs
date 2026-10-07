@@ -35,102 +35,101 @@ impl CarPlayClientSession {
 
         let reset = [
             NowPlayingUpdate {
-                media_item: Some(MediaItem {
-                    persistent_id: Some(0),
-                    title: Some("".into()),
-                    playback_duration_in_ms: Some(0),
-                    album_title: Some("".into()),
-                    album_track_number: Some(0),
-                    album_track_count: Some(0),
-                    album_disc_number: Some(0),
-                    album_disc_count: Some(0),
-                    artist: Some("".into()),
-                    genre: Some("".into()),
-                    composer: Some("".into()),
-                    is_like_supported: Some(false),
-                    is_ban_supported: Some(false),
-                    is_liked: Some(false),
-                    is_banned: Some(false),
-                    is_resident_on_device: None,
-                    artwork_file_transfer_id: first_tx,
-                    chapter_count: Some(0),
-                    ..MediaItem::default()
+                media_item_attributes: Some(NowPlayingUpdateMediaItemAttributes {
+                    media_item_persistent_identifier: Some(0),
+                    media_item_title: Some("".into()),
+                    media_item_playback_duration_in_milliseconds: Some(0),
+                    media_item_album_title: Some("".into()),
+                    media_item_album_track_number: Some(0),
+                    media_item_album_track_count: Some(0),
+                    media_item_album_disc_number: Some(0),
+                    media_item_album_disc_count: Some(0),
+                    media_item_artist: Some("".into()),
+                    media_item_genre: Some("".into()),
+                    media_item_composer: Some("".into()),
+                    media_item_is_like_supported: Some(false),
+                    media_item_is_ban_supported: Some(false),
+                    media_item_is_liked: Some(false),
+                    media_item_is_banned: Some(false),
+                    media_item_artwork_file_transfer_identifier: first_tx,
+                    media_item_chapter_count: Some(0),
+                    ..NowPlayingUpdateMediaItemAttributes::default()
                 }),
-                playback_attributes: Some(PlaybackAttributes {
+                playback_attributes: Some(NowPlayingUpdatePlaybackAttributes {
                     playback_status: Some(PlaybackStatus::Stopped),
-                    playback_elapsed_time_ms: Some(0),
+                    playback_elapsed_time_in_milliseconds: Some(0),
                     playback_queue_index: Some(0),
                     playback_queue_count: Some(0),
                     playback_queue_chapter_index: Some(0),
                     playback_shuffle_mode: Some(PlaybackShuffle::Off),
                     playback_repeat_mode: Some(PlaybackRepeat::Off),
                     playback_app_name: Some("".into()),
-                    pb_media_library_unique_identifier: Some("".into()),
-                    pb_apple_music_radio_ad: Some(false),
-                    pb_apple_music_radio_station_name: Some("".into()),
-                    pb_apple_music_radio_station_media_playlist_id: Some(0),
+                    playback_media_library_unique_identifier: Some("".into()),
+                    playback_apple_music_radio_ad: Some(false),
+                    playback_apple_music_radio_station_name: Some("".into()),
+                    playback_apple_music_radio_station_media_playlist_id: Some(0),
                     playback_speed: Some(0),
-                    set_elapsed_time_available: Some(false),
-                    playback_queue_list_available: Some(false),
+                    playback_set_elapsed_time_available: Some(false),
+                    playback_queue_list_avail: Some(false),
                     playback_queue_list_transfer_id: None,
                     playback_app_bundle_id: Some("".into()),
-                    ..PlaybackAttributes::default()
+                    ..NowPlayingUpdatePlaybackAttributes::default()
                 }),
             },
             NowPlayingUpdate {
-                media_item: None,
-                playback_attributes: Some(PlaybackAttributes {
+                media_item_attributes: None,
+                playback_attributes: Some(NowPlayingUpdatePlaybackAttributes {
                     playback_status: Some(PlaybackStatus::Stopped),
-                    playback_elapsed_time_ms: Some(0),
+                    playback_elapsed_time_in_milliseconds: Some(0),
                     playback_queue_index: Some(0),
                     playback_queue_count: Some(0),
                     playback_queue_chapter_index: Some(0),
                     playback_shuffle_mode: Some(PlaybackShuffle::Off),
                     playback_repeat_mode: Some(PlaybackRepeat::Off),
                     playback_app_name: Some("".into()),
-                    pb_media_library_unique_identifier: Some("".into()),
-                    pb_apple_music_radio_ad: Some(false),
-                    pb_apple_music_radio_station_name: Some("".into()),
-                    pb_apple_music_radio_station_media_playlist_id: Some(0),
+                    playback_media_library_unique_identifier: Some("".into()),
+                    playback_apple_music_radio_ad: Some(false),
+                    playback_apple_music_radio_station_name: Some("".into()),
+                    playback_apple_music_radio_station_media_playlist_id: Some(0),
                     playback_speed: Some(100),
-                    set_elapsed_time_available: Some(false),
+                    playback_set_elapsed_time_available: Some(false),
                     playback_app_bundle_id: Some("".into()),
-                    ..PlaybackAttributes::default()
+                    ..NowPlayingUpdatePlaybackAttributes::default()
                 }),
             },
             NowPlayingUpdate {
-                media_item: Some(MediaItem {
-                    persistent_id: Some(0),
-                    title: Some("".into()),
-                    playback_duration_in_ms: Some(0),
-                    album_title: Some("".into()),
-                    album_track_number: Some(0),
-                    album_track_count: Some(0),
-                    album_disc_number: Some(0),
-                    album_disc_count: Some(0),
-                    artist: Some("".into()),
-                    genre: Some("".into()),
-                    composer: Some("".into()),
-                    is_like_supported: Some(false),
-                    is_ban_supported: Some(false),
-                    is_liked: Some(false),
-                    is_banned: Some(false),
-                    chapter_count: Some(0),
-                    ..MediaItem::default()
+                media_item_attributes: Some(NowPlayingUpdateMediaItemAttributes {
+                    media_item_persistent_identifier: Some(0),
+                    media_item_title: Some("".into()),
+                    media_item_playback_duration_in_milliseconds: Some(0),
+                    media_item_album_title: Some("".into()),
+                    media_item_album_track_number: Some(0),
+                    media_item_album_track_count: Some(0),
+                    media_item_album_disc_number: Some(0),
+                    media_item_album_disc_count: Some(0),
+                    media_item_artist: Some("".into()),
+                    media_item_genre: Some("".into()),
+                    media_item_composer: Some("".into()),
+                    media_item_is_like_supported: Some(false),
+                    media_item_is_ban_supported: Some(false),
+                    media_item_is_liked: Some(false),
+                    media_item_is_banned: Some(false),
+                    media_item_chapter_count: Some(0),
+                    ..NowPlayingUpdateMediaItemAttributes::default()
                 }),
                 playback_attributes: None,
             },
             NowPlayingUpdate {
-                media_item: None,
-                playback_attributes: Some(PlaybackAttributes {
-                    playback_queue_list_available: Some(false),
-                    ..PlaybackAttributes::default()
+                media_item_attributes: None,
+                playback_attributes: Some(NowPlayingUpdatePlaybackAttributes {
+                    playback_queue_list_avail: Some(false),
+                    ..NowPlayingUpdatePlaybackAttributes::default()
                 }),
             },
             NowPlayingUpdate {
-                media_item: Some(MediaItem {
-                    artwork_file_transfer_id: next_tx,
-                    ..MediaItem::default()
+                media_item_attributes: Some(NowPlayingUpdateMediaItemAttributes {
+                    media_item_artwork_file_transfer_identifier: next_tx,
+                    ..NowPlayingUpdateMediaItemAttributes::default()
                 }),
                 playback_attributes: None,
             },
@@ -229,6 +228,7 @@ impl CsmSession for CarPlayClientSession {
                     vehicle_gyro_data: CsmFlag::No,
                     vehicle_accelerometer_data: CsmFlag::No,
                     vehicle_heading_data: CsmFlag::No,
+                    ..StartLocationInformation::default()
                 },
                 &_handle,
             )?;

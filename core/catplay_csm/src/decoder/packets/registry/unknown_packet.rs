@@ -3,7 +3,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::fmt::{self, Debug};
 
-use crate::decoder::{CsmParamEncodeBytes, CsmWriter};
+use crate::decoder::{CsmPayloadEncode, CsmWriter};
 
 /// Represents a decoded CSM packet with unknown id and raw payload data.
 ///
@@ -21,7 +21,7 @@ impl CsmUnknownPacket {
     }
 }
 
-impl CsmParamEncodeBytes for CsmUnknownPacket {
+impl CsmPayloadEncode for CsmUnknownPacket {
     fn encode_to_bytes(&self, writer: &mut CsmWriter) {
         writer.write_data_chunk(self.payload());
     }

@@ -122,14 +122,14 @@ struct NowPlayingSummary {
 
 impl NowPlayingSummary {
     fn from_update(update: &NowPlayingUpdate) -> Self {
-        let Some(media_item) = &update.media_item else {
+        let Some(media_item) = &update.media_item_attributes else {
             return Self::default();
         };
 
         Self {
-            title: media_item.title.clone(),
-            artists: media_item.artist.clone(),
-            album: media_item.album_title.clone(),
+            title: media_item.media_item_title.clone(),
+            artists: media_item.media_item_artist.clone(),
+            album: media_item.media_item_album_title.clone(),
         }
     }
 }
@@ -181,7 +181,10 @@ impl CarPlayServerSession {
         if self.now_playing.is_none() {
             self.now_playing.replace(np);
         } else {
-            if let Some(Some(artwork_file_transfer_id)) = np.media_item.as_ref().map(|m| m.artwork_file_transfer_id)
+            if let Some(Some(artwork_file_transfer_id)) = np
+                .media_item_attributes
+                .as_ref()
+                .map(|m| m.media_item_artwork_file_transfer_identifier)
                 && Some(artwork_file_transfer_id) != self.now_playing_next_cover_art
             {
                 info!("Cover art invalidated; waiting for transfer ID {artwork_file_transfer_id}");
@@ -337,7 +340,8 @@ impl CarPlayServerSession {
             identifier: 1,
             name: "VEH_INFO_USE".into(),
             display_name: identity.display_name.clone(),
-            engine_type: EngineTypes::Gasoline,
+            engine_type: vec![EngineTypes::Gasoline],
+            ..VehicleInformationComponent::default()
         });
 
         if identity.has_gps {
@@ -345,8 +349,8 @@ impl CarPlayServerSession {
                 identifier: 4001,
                 name: "LOC_USE".into(),
                 global_positioning_system_fix_data: CsmFlag::Yes,
-                recommended_minimum_specific_gpstransit_data: CsmFlag::Yes,
-                gpssatellites_in_view: CsmFlag::No,
+                recommended_minimum_specific_gps_transit_data: CsmFlag::Yes,
+                gps_satellites_in_view: CsmFlag::No,
                 vehicle_speed_data: CsmFlag::Yes,
                 vehicle_gyro_data: CsmFlag::No,
                 vehicle_accelerometer_data: CsmFlag::No,
@@ -355,23 +359,24 @@ impl CarPlayServerSession {
         }
 
         if let Some(ncm_iface) = identity.ncm_iface {
-            id.usbhost_transport_component = Some(USBHostTransportComponent {
+            id.usb_host_transport_component = Some(USBHostTransportComponent {
                 transport_component_identifier: 1001,
                 transport_component_name: "USB_USE".into(),
                 transport_supports_iap2_connection: CsmFlag::Yes,
-                usbhost_transport_car_play_interface_number: Some(ncm_iface),
+                usb_host_transport_car_play_interface_number: Some(ncm_iface),
                 transport_supports_car_play: CsmFlag::Yes,
+                ..USBHostTransportComponent::default()
             });
         }
 
         if let Some(bt_mac) = identity.bt_mac {
-            let mac_bytes = bt_mac.as_bytes().into();
+            let mac_bytes = bt_mac.into_array();
 
             id.bluetooth_transport_component = vec![BluetoothTransportComponent {
                 transport_component_identifier: 1,
                 transport_component_name: "IAP2-Bluetooth".into(),
                 transport_supports_iap2_connection: CsmFlag::Yes,
-                bluetooth_transport_mac_address: mac_bytes,
+                bluetooth_transport_media_access_control_address: mac_bytes,
             }];
         }
 
@@ -381,7 +386,7 @@ impl CarPlayServerSession {
                 transport_component_name: "IAP2-Wireless".into(),
                 transport_supports_iap2_connection: CsmFlag::Yes,
                 transport_supports_car_play: CsmFlag::Yes,
-                transport_supports_mutual_auth: CsmFlag::No,
+                ..WirelessCarPlayTransportComponent::default()
             }];
         }
 
@@ -395,9 +400,9 @@ impl CarPlayServerSession {
             wifi_ssid: wifi_ssid.clone(),
             passphrase: identity.wifi_passphrase.clone(),
             security_type: match (identity.wifi_is_wpa, identity.wifi_passphrase.clone()) {
-                (true, Some(_)) => Some(WiFiSecurityType::WpaOrWpa2),
-                (false, Some(_)) => Some(WiFiSecurityType::WEP),
-                _ => Some(WiFiSecurityType::None),
+                (true, Some(_)) => Some(AccessoryWiFiConfigurationSecurityType::Wpa2PersonalWpa3PersonalTransitionMode),
+                (false, Some(_)) => Some(AccessoryWiFiConfigurationSecurityType::Wep),
+                _ => Some(AccessoryWiFiConfigurationSecurityType::None),
             },
             channel: identity.wifi_channel,
         })

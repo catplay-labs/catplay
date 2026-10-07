@@ -1,4 +1,4 @@
-use crate::decoder::{CsmError, CsmParamEncodeBytes, CsmWriter};
+use crate::decoder::wire::{CsmError, CsmPayloadEncode, CsmWriter};
 
 const CSM_HEADER_MAGIC: u16 = 0x4040;
 const CSM_HEADER_SIZE: usize = 6;
@@ -95,10 +95,71 @@ impl<'a> CsmPacketWithPayload<'a> {
     }
 }
 
-impl<'a> CsmParamEncodeBytes for CsmPacketWithPayload<'a> {
+impl<'a> CsmPayloadEncode for CsmPacketWithPayload<'a> {
     fn encode_to_bytes(&self, writer: &mut CsmWriter) {
         writer.write_data_chunk(&CSM_HEADER_MAGIC.to_be_bytes());
         writer.write_tlv_header(self.header.id, self.payload.len() + 2);
         writer.write_data_chunk(self.payload);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_encode_parse_round_trip() {
+        let frame = CsmPacketWithPayload::new(0x1234, &[1, 2, 3]).unwrap();
+        let encoded = frame.serialize();
+
+        assert_eq!(encoded, [0x40, 0x40, 0x00, 0x09, 0x12, 0x34, 1, 2, 3]);
+
+        let decoded = CsmPacketWithPayload::try_from(encoded.as_slice()).unwrap();
+        assert_eq!(decoded.header.payload_length, 3);
+        assert_eq!(decoded.header.id, 0x1234);
+        assert_eq!(decoded.payload, [1, 2, 3]);
+    }
+
+    #[test]
+    fn frame_rejects_short_header() {
+        for len in 0..CSM_HEADER_SIZE {
+            assert_eq!(
+                CsmPacketHeader::try_from(&[0; CSM_HEADER_SIZE][..len]).err(),
+                Some(CsmError::PacketUnderflow)
+            );
+        }
+    }
+
+    #[test]
+    fn frame_rejects_invalid_magic() {
+        let data = [0x00, 0x00, 0x00, 0x06, 0x12, 0x34];
+
+        assert_eq!(CsmPacketHeader::try_from(data.as_slice()).err(), Some(CsmError::PacketMagic));
+    }
+
+    #[test]
+    fn frame_rejects_header_length_below_header_size() {
+        let data = [0x40, 0x40, 0x00, 0x05, 0x12, 0x34];
+
+        assert_eq!(CsmPacketHeader::try_from(data.as_slice()).err(), Some(CsmError::PacketUnderflow));
+    }
+
+    #[test]
+    fn frame_rejects_truncated_payload() {
+        let data = [0x40, 0x40, 0x00, 0x08, 0x12, 0x34, 0x01];
+
+        assert_eq!(
+            CsmPacketWithPayload::try_from(data.as_slice()).err(),
+            Some(CsmError::PacketUnderflow)
+        );
+    }
+
+    #[test]
+    fn frame_checks_payload_size_limit() {
+        let maximum = vec![0; CSM_PACKET_PAYLOAD_MAX];
+        let overflow = vec![0; CSM_PACKET_PAYLOAD_MAX + 1];
+
+        assert!(CsmPacketWithPayload::new(0x1234, &maximum).is_ok());
+        assert_eq!(CsmPacketWithPayload::new(0x1234, &overflow).err(), Some(CsmError::PacketOverflow));
     }
 }

@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use catplay_csm::{decoder::*, msg::AuthenticationCertificate};
+    use catplay_csm::decoder::*;
+    use catplay_csm::msg::iap2::PowerUpdate;
 
     #[test]
     fn registry_should_not_be_empty_at_runtime() {
@@ -10,66 +11,8 @@ mod tests {
             .iter()
             .map(|x| format!("{:#04x}", *x))
             .collect();
-        assert!(!ids.is_empty());
+        assert_eq!(ids.len(), 144);
         println!("Known IDs: {:?}", ids)
-    }
-
-    #[test]
-    fn registry_decode_and_downcast_ref() {
-        let auth_cert_packet: &[u8] = &[
-            0x40, 0x40, // Magic
-            0x00, 0x0E, // Length = 14 bytes
-            0xAA, 0x01, // Type = AuthenticationCertificate
-            0x00, 0x08, // TLV Length = 8 (2 len + 2 id + 4 data)
-            0x00, 0x00, // TLV ID = 0x0000
-            0x54, 0x45, 0x53, 0x54, // "TEST"
-        ];
-        let expected = AuthenticationCertificate {
-            authentication_certificate: vec![b'T', b'E', b'S', b'T'].into(),
-        };
-        let registry = CsmPacketRegistry::static_registry();
-        let decoded = registry.decode(auth_cert_packet).expect("expected packet");
-
-        if let Some(x) = AuthenticationCertificate::cast(&decoded) {
-            assert_eq!(expected, *x);
-        } else {
-            panic!("Wrong type {:?}", decoded)
-        }
-        println!("{:?}", decoded)
-    }
-
-    #[test]
-    fn registry_encode() {
-        let auth_cert_packet: &[u8] = &[
-            0x40, 0x40, // Magic
-            0x00, 0x0E, // Length = 14 bytes
-            0xAA, 0x01, // Type = AuthenticationCertificate
-            0x00, 0x08, // TLV Length = 8 (2 len + 2 id + 4 data)
-            0x00, 0x00, // TLV ID = 0x0000
-            0x54, 0x45, 0x53, 0x54, // "TEST"
-        ];
-
-        let registry = CsmPacketRegistry::static_registry();
-        let packet = AuthenticationCertificate {
-            authentication_certificate: vec![b'T', b'E', b'S', b'T'].into(),
-        };
-
-        let bytes = registry.encode(&packet).expect("no packet encoded");
-
-        let decoded_packet = &registry
-            .decode(auth_cert_packet)
-            .expect("no packet decoded");
-
-        let decoded_packet_unpacked = AuthenticationCertificate::cast(decoded_packet).expect("no packet after downcast ref");
-
-        let reserialized = registry
-            .encode(decoded_packet_unpacked)
-            .expect("no packet encoded #2");
-
-        assert_eq!(auth_cert_packet, bytes);
-        assert_eq!(auth_cert_packet, reserialized);
-        println!("{:?}", decoded_packet);
-        println!("{:?}", bytes);
     }
 
     #[test]
@@ -86,5 +29,33 @@ mod tests {
 
         let encoded = registry.encode(&decoded).unwrap();
         assert_eq!(encoded, encoded);
+    }
+
+    #[cfg(feature = "clone_box")]
+    #[test]
+    fn boxed_packet_clone_preserves_type_and_payload() {
+        let original: CsmPacketBox = CsmUnknownPacket(0x1234, vec![1, 2, 3]).into();
+        let cloned = original.clone();
+        drop(original);
+
+        assert_eq!(cloned.cast::<CsmUnknownPacket>(), Some(&CsmUnknownPacket(0x1234, vec![1, 2, 3])));
+    }
+
+    #[test]
+    fn registry_creates_default_and_decodes_payload() {
+        let registry = CsmPacketRegistry::static_registry();
+        let id = PowerUpdate::PACKET_ID;
+
+        let empty = registry.create_by_id(id).unwrap();
+        assert_eq!(empty.cast::<PowerUpdate>(), Some(&PowerUpdate::default()));
+
+        let value = PowerUpdate {
+            maximum_current_drawn_from_accessory: Some(42),
+            ..PowerUpdate::default()
+        };
+        let decoded = registry
+            .create_by_id_from_bytes(id, &value.serialize())
+            .unwrap();
+        assert_eq!(decoded.cast::<PowerUpdate>(), Some(&value));
     }
 }

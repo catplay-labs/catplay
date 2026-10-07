@@ -4,13 +4,22 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+catplay_reflect = { path = "../catplay_reflect", optional = true }
 inventory = { version = "0.3.21", optional = true }
 
 [dev-dependencies]
 insta = "1.44.3"
+anyhow = "1"
+heck = "0.5"
+plist = "=1.10.1"
+regex = "1"
+sha2 = "0.10"
 
 [features]
 inventory = ["dep:inventory"]
 alloc = []
 std = []
-default = ["std", "alloc", "inventory"]
+iap2 = ["alloc"]
+project = ["dep:catplay_reflect"]
+clone_box = ["alloc"]
+default = ["std", "alloc", "inventory", "iap2", "project"]

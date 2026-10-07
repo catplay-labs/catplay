@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use crate::decoder::{CsmAccum, CsmDecode, CsmEncode, CsmParam, CsmWriter, prim::prim_encode::encode_repeating_params};
+use crate::decoder::{CsmAccum, CsmDecode, CsmEncode, CsmParam, CsmWriter};
 use alloc::vec::Vec;
 
 pub type CsmVec<T> = Vec<T>;
@@ -26,6 +26,6 @@ impl<T: CsmDecode> CsmAccum for Vec<T> {
 // Special case - Vec<T> - multiple params of the same id
 impl<T: CsmEncode> CsmEncode for Vec<T> {
     fn encode_param(&self, id: u16, out: &mut CsmWriter) {
-        encode_repeating_params(id, out, self.as_slice());
+        self.as_slice().encode_param(id, out);
     }
 }

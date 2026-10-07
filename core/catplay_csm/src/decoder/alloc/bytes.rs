@@ -66,6 +66,6 @@ impl CsmDecode for CsmByteArray {
 // Special case: CsmByteArray - not to be confused with Vec<u8>!
 impl CsmEncode for CsmByteArray {
     fn encode_param(&self, id: u16, out: &mut CsmWriter) {
-        self.data.as_slice().encode_param(id, out);
+        CsmEncode::encode_param(&self.data.as_slice(), id, out);
     }
 }

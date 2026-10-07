@@ -3,7 +3,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use crate::decoder::{
-    AsCsmPacket, CsmError, CsmPacketBox, CsmPacketWithPayload, CsmParamEncodeBytes, CsmResult,
+    AsCsmPacket, CsmError, CsmPacketBox, CsmPacketWithPayload, CsmPayloadEncode, CsmResult,
     packets::registry::{CsmPacketRegistry, CsmUnknownPacket},
 };
 

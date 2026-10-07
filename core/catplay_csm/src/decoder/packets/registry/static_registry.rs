@@ -19,7 +19,10 @@ fn get_runtime_csm_registry() -> &'static CsmPacketRegistry {
         let mut registry = CsmPacketRegistry::new();
 
         for reg in inventory::iter::<CsmPacketRegistration> {
-            (reg.register_fn)(&mut registry, reg.id);
+            match reg {
+                CsmPacketRegistration::Single { id, register_fn } => register_fn(&mut registry, *id),
+                CsmPacketRegistration::Batch { register_fn } => register_fn(&mut registry),
+            }
         }
         registry
     })
