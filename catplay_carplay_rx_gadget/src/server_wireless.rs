@@ -540,6 +540,22 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
 
                 server.stop_inviting();
 
+                // The session just ended (e.g. the phone's Wi-Fi went away). The phone dropped its Bluetooth
+                // link when the session started, so nothing brings it back unless we page it again.
+                if _status == &LocalState::Receiving
+                    && self.find_active_session().is_none()
+                    && let Some(mac) = self.last_mac
+                    && let Some(peer_mac) = self.get_bt_last_connect().or(self.last_bt_peer)
+                {
+                    info!("Session ended, reconnecting to iPhone peer {peer_mac}");
+                    return LocalState::StartingLastConnect {
+                        hci: self.hci.clone(),
+                        mac,
+                        peer_mac,
+                    }
+                    .into();
+                }
+
                 match self.find_active_session() {
                     None if self.invites_blocked => LocalState::Passive.into(),
                     None => LocalState::Inviting.into(),
