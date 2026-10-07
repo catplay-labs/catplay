@@ -7,6 +7,7 @@ use catplay_csm::{
     msg::*,
 };
 use catplay_iap2_client::{CsmClientHandleRef, CsmSession, CsmSessionResult};
+use catplay_iap2_usb_host::PhoneGadgetDriver;
 use log::debug;
 
 #[derive(Default)]
@@ -16,9 +17,24 @@ pub struct CarPlayClientSession {
     flushed_power: bool,
     start: Option<Instant>,
     artwork_tx: Option<u8>,
+    /// Bonjour ID of the CarPlay-control advertisement, sent as the Bluetooth transport identifier
+    bonjour_id: String,
+    /// g_iphone instance, whose USB serial is sent as the USB transport identifier
+    iphone_instance: String,
+    /// The accessory listed these in IdentificationInformation.messages_received_from_device
+    accessory_wants_transport_ids: bool,
+    accessory_wants_language: bool,
 }
 
 impl CarPlayClientSession {
+    pub fn new(bonjour_id: &str, iphone_instance: &str) -> Self {
+        Self {
+            bonjour_id: bonjour_id.into(),
+            iphone_instance: iphone_instance.into(),
+            ..Default::default()
+        }
+    }
+
     pub fn send(&mut self, packet: &dyn AsCsmPacket, handle: &CsmClientHandleRef) -> CsmSessionResult<()> {
         debug!(
             "<- Outgoing packet @ {:?}: {:?}",
@@ -171,7 +187,12 @@ impl CsmSession for CarPlayClientSession {
         if let Some(_id) = IdentificationInformation::cast(&packet) {
             let supports_modern_carplay =
                 IdentificationInformation::unpack_ids(&_id.messages_sent_by_accessory).contains(&CarPlayStartSession::PACKET_ID);
-            debug!("Identification accepted! Modern CarPlay: {supports_modern_carplay}");
+            self.accessory_wants_transport_ids = _id.wants_rx(DeviceTransportIdentifierNotification::PACKET_ID);
+            self.accessory_wants_language = _id.wants_rx(DeviceLanguageUpdate::PACKET_ID);
+            debug!(
+                "Identification accepted! Modern CarPlay: {supports_modern_carplay}, wants transport IDs: {}, wants language: {}",
+                self.accessory_wants_transport_ids, self.accessory_wants_language
+            );
 
             if supports_modern_carplay {
                 // TODO
@@ -210,10 +231,29 @@ impl CsmSession for CarPlayClientSession {
                 },
                 &_handle,
             )?;
-            // _handle.send(&DeviceTransportIdentifierNotification {
-            //     usb_transport_identifier: Some("00008130000E044E384B1D3ADDDDDDDDDDDDDDDF".into()),
-            //     bluetooth_transport_identifier: Some("aa:bb:cc:dd:ee:ff".into()),
-            // })?;
+            // Some head units (Hyundai/Kia "D-Audio") list these and do not invite the device over
+            // CarPlay-control until they have received them.
+            if self.accessory_wants_language {
+                self.send(
+                    &DeviceLanguageUpdate {
+                        device_language: Some("en".into()),
+                    },
+                    &_handle,
+                )?;
+            }
+            if self.accessory_wants_transport_ids {
+                let usb_serial = PhoneGadgetDriver::get_serial(&self.iphone_instance)
+                    .ok()
+                    .map(|serial| serial.trim().to_string())
+                    .filter(|serial| !serial.is_empty());
+                self.send(
+                    &DeviceTransportIdentifierNotification {
+                        bluetooth_transport_identifier: Some(self.bonjour_id.clone()),
+                        usb_transport_identifier: usb_serial,
+                    },
+                    &_handle,
+                )?;
+            }
 
             // _handle.send(&DeviceTimeUpdate {
             //     seconds_since_epoch: 1768172567,
