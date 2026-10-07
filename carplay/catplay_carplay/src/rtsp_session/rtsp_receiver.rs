@@ -101,8 +101,9 @@ pub trait RtspReceiverCallback:
 
 impl<T: RtspReceiverCallback> RtspReceiver<T> {
     const RESPONSE_PAYLOAD_CACHE_MAX: usize = 4096;
-    // Some CarPlay dongles violate CSeq sanity so changing this allows communication with them.
-    const ENFORCE_CSEQ_SANITY: bool = true;
+    // Some cheap CarPlay dongles violate CSeq sanity as transmitters so changing this allows communication with them.
+    // Since iOS 27, iPhone will randomly violate CSeq sanity as well so default to false.
+    const ENFORCE_CSEQ_SANITY: bool = false;
 
     pub fn new(callback: T) -> Self {
         Self {
