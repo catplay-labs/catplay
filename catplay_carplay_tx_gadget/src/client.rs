@@ -54,7 +54,10 @@ impl CarPlayUsbClientGadget {
         homekit: HomekitStorageRef,
         pinned: bool,
     ) -> GadgetResult<Reconciler<Self>> {
-        let g = CarPlayPhoneGadget::new_with_csm(udc, iphone_instance, pinned, || CarPlayClientSession::default())?;
+        let (session_bonjour_id, session_instance) = (bonjour_id.to_string(), iphone_instance.to_string());
+        let g = CarPlayPhoneGadget::new_with_csm(udc, iphone_instance, pinned, move || {
+            CarPlayClientSession::new(&session_bonjour_id, &session_instance)
+        })?;
         Ok(Reconciler::new(
             Self {
                 g,
