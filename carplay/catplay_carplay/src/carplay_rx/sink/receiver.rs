@@ -8,7 +8,7 @@ use catplay_iap2_client::{
 use catplay_mfi::MfiDevice;
 use catplay_plist::CachingSerializer;
 use catplay_tokio::{TcpHelper, UdpHelper};
-use catplay_util::{AsyncShutdown, EventReconciler, EventSink, EventSleeper, futures_xordered::FuturesUnordered, mpsc};
+use catplay_util::{AsyncShutdown, EventReconciler, EventSink, EventSleeper, futures_xordered::FuturesUnordered, mpsc, spawn_fork};
 use futures::future::BoxFuture;
 use log::{debug, error, info, trace, warn};
 use macaddr::MacAddr6;
@@ -635,7 +635,7 @@ impl AirPlayReceiver {
             media_clock.boxed(),
         );
 
-        let (helper, local) = TcpHelper::accept_timeout(bind_ip, Self::TCP_REVERSE_CONN_TIMEOUT, recv)?;
+        let (helper, local) = spawn_fork("screen_rx", move || TcpHelper::accept_timeout(bind_ip, Self::TCP_REVERSE_CONN_TIMEOUT, recv))?;
         self.streams.screen.replace(helper);
 
         Ok(StreamDescriptionResponse::new_screen(local.port()))

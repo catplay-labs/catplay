@@ -1,5 +1,5 @@
 use catplay_tokio::TcpHelper;
-use catplay_util::{AsyncShutdown, EventReconciler, EventSleeper, deadline, mpsc};
+use catplay_util::{AsyncShutdown, EventReconciler, EventSleeper, deadline, mpsc, spawn_fork};
 use futures::{FutureExt, StreamExt};
 use log::{debug, info, trace, warn};
 use std::time::{Duration, Instant};
@@ -348,7 +348,7 @@ impl AirPlayTransmitterImpl {
         video_ip.set_port(resp.data_port);
 
         // TODO: await connection and reconcile it with media stream state lifecycle.
-        let socket = TcpHelper::connect_timeout(video_ip, Self::TCP_CONN_TIMEOUT_SCREEN, session)?;
+        let socket = spawn_fork("screen_tx", move || TcpHelper::connect_timeout(video_ip, Self::TCP_CONN_TIMEOUT_SCREEN, session))?;
         self.media
             .screen
             .connect_with_uuid(socket, latency, display_uuid);
