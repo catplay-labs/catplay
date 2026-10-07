@@ -1,0 +1,10 @@
+[package]
+name = "catplay_reflect"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+
+[dependencies]
+
+[dev-dependencies]
+compiletest_rs = "0.11.2"
