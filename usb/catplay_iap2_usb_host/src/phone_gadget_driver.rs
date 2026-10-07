@@ -185,7 +185,6 @@ impl PhoneGadgetDriver {
                 pid: Self::get_iap2_product_id(device_name)?,
                 manufacturer: Self::get_iap2_manufacturer(device_name)?,
                 product: Self::get_iap2_product(device_name)?,
-                iap2: Self::get_iap2_path(device_name)?,
                 ncm: Some(Self::get_iap2_ifname(device_name)?),
             }),
             _ => GadgetStatus::Error(format!("unexpected g_iphone status: {}", status.trim()).into()),
@@ -198,7 +197,16 @@ impl PhoneGadgetDriver {
 
     // Accessory child nodes
     pub fn get_iap2_path(device_name: &str) -> GadgetResult<String> {
-        Self::get_param(device_name, "iap2_accessory/iap2_devnode")
+        let link = Self::iphone_param_path(device_name, "iap2_devnode");
+        let target = fs::read_link(link).map_err(|e| GadgetError::FailedGadgetStatusCheck(e.into()))?;
+        let name = target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| name.starts_with("iap2-") && name[5..].bytes().all(|byte| byte.is_ascii_digit()) && name.len() > 5)
+            .ok_or_else(|| {
+                GadgetError::FailedGadgetStatusCheck(io::Error::new(io::ErrorKind::InvalidData, "invalid iAP2 sysfs link").into())
+            })?;
+        Ok(format!("/dev/{name}"))
     }
 
     pub fn get_iap2_ifname(device_name: &str) -> GadgetResult<String> {

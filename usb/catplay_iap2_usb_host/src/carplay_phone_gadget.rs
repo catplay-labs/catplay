@@ -9,13 +9,14 @@ use catplay_iap2_client::{
     tokio::{AsyncClient, AsyncClientStream, IAP2Fd},
 };
 use catplay_iap2_usb::{NcmHelper, UdcHelper};
-use catplay_util::{AsyncShutdown, EventReconciler, EventSleeper, Reconcilable, Reconciler, deadline_after, event_select};
-use log::{debug, error, info};
+use catplay_util::{AsyncShutdown, EventReconciler, EventSleeper, Reconcilable, Reconciler, deadline, deadline_after, event_select};
+use log::{debug, error, info, warn};
 
 use catplay_iap2_usb::{GadgetError, GadgetResult};
+use tokio::io::{AsyncRead, AsyncWrite};
 use uuid::Uuid;
 
-use crate::{AccessoryData, GadgetStatus, phone_gadget::PhoneGadget};
+use crate::{AccessoryData, GadgetStatus, phone_gadget::PhoneGadget, phone_gadget_driver::PhoneGadgetDriver};
 
 #[derive(Debug, thiserror::Error, PartialEq, Clone)]
 pub enum CarPlayPhoneGadgetError {
@@ -56,6 +57,8 @@ pub enum CarPlayPhoneGadgetError {
 
     #[error("Failed to poll USB for hotplugs: {0}")]
     FailedHotplug(GadgetError),
+    #[error("Failed to open the current iAP2 pipe: {0}")]
+    FailedIap2Pipe(GadgetError),
 
     #[error("State machine has entered invalid state")]
     UnexpectedState,
@@ -123,6 +126,7 @@ pub struct CarPlayPhoneGadget {
 
     csm: CsmSessionCallback,
     burst_wakeups: bool,
+    iap2_deadline: Option<Instant>,
 }
 
 impl CarPlayPhoneGadget {
@@ -153,20 +157,9 @@ impl CarPlayPhoneGadget {
             accessory_iap2: None,
             csm,
             burst_wakeups: false,
+            iap2_deadline: None,
         };
         Ok(Reconciler::new(me, Ok(CarPlayPhoneGadgetStatus::Initial)))
-    }
-
-    async fn start_iap2(&mut self) {
-        self.shutdown_iap2().await;
-
-        let session = (self.csm)();
-        let client = AsyncClient::new(true, CsmRemote::usb_gadget(), session);
-        // self.accessory_iap2_status.replace(client.0.subscribe());
-        let fd = IAP2Fd::open("/dev/iap2-0").expect("TODO");
-
-        let pipe = AsyncClientStream::new(client.0, client.1, fd);
-        self.accessory_iap2.replace(pipe);
     }
 
     async fn shutdown_iap2(&mut self) {
@@ -229,6 +222,7 @@ impl EventSleeper for CarPlayPhoneGadget {
         event_select!(
             self.gadget,
             self.accessory_iap2,
+            self.iap2_deadline.map(deadline),
             deadline_after(if self.burst_wakeups {
                 Duration::from_millis(20)
             } else {
@@ -253,6 +247,8 @@ impl Reconcilable for CarPlayPhoneGadget {
             self.accessory = None;
         }
 
+        self.iap2_deadline = None;
+
         self.burst_wakeups = new.is_err()
             || matches!(
                 new,
@@ -273,17 +269,32 @@ impl Reconcilable for CarPlayPhoneGadget {
             return err.into();
         };
 
-        if let Some(pipe) = self.accessory_iap2.as_mut()
-            && let Err(err) = pipe.reconcile().await
-        {
-            return CarPlayPhoneGadgetError::AccessoryDisconnectedIAp2(err).into();
+        if status == CarPlayPhoneGadgetStatus::Initial {
+            if self.pinned {
+                return CarPlayPhoneGadgetStatus::WaitingForAccessory { pinned: true }.into();
+            }
+
+            self.start_gadget().await?;
+            return CarPlayPhoneGadgetStatus::GadgetStarted.into();
         }
 
         if let Some(gadget) = self.gadget.as_mut() {
             if let Err(err) = gadget.reconcile().await {
                 return CarPlayPhoneGadgetError::FailedHotplug(err).into();
             }
+        }
 
+        // Consume sysfs notifications before resolving the link. A link change
+        // racing this lookup will then leave another notification to wake us.
+        reconcile_iap2_pipe(&mut self.accessory_iap2, || {
+            let path = PhoneGadgetDriver::get_iap2_path(&self.iphone_instance)?;
+            let fd = IAP2Fd::open(&path)?;
+            let (client, drain) = AsyncClient::new(true, CsmRemote::usb_gadget(), (self.csm)());
+            Ok(AsyncClientStream::new(client, drain, fd))
+        })
+        .await?;
+
+        if let Some(gadget) = self.gadget.as_ref() {
             let gstatus = gadget.status();
             if gstatus.is_final() && !gstatus.is_role_switch() {
                 return CarPlayPhoneGadgetError::AccessoryDisconnectedWithoutRoleSwitch(gstatus).into();
@@ -318,15 +329,6 @@ impl Reconcilable for CarPlayPhoneGadget {
             }
         };
 
-        if status == CarPlayPhoneGadgetStatus::Initial {
-            if self.pinned {
-                return CarPlayPhoneGadgetStatus::WaitingForAccessory { pinned: true }.into();
-            }
-
-            self.start_gadget().await?;
-            return CarPlayPhoneGadgetStatus::GadgetStarted.into();
-        }
-
         if status == CarPlayPhoneGadgetStatus::GadgetStarted {
             return CarPlayPhoneGadgetStatus::GadgetStarted.into();
         }
@@ -352,43 +354,26 @@ impl Reconcilable for CarPlayPhoneGadget {
         }
 
         if status == CarPlayPhoneGadgetStatus::DetectedAccessory {
-            let Some(acc) = self.accessory.as_ref() else {
+            if self.accessory.is_none() {
                 return CarPlayPhoneGadgetError::AccessoryFailedRoleSwitch.into();
-            };
+            }
 
-            // if accessory.has_ncm() {
-            //     accessory.bind_ncm().map_err(CarPlayPhoneGadgetError::AccessoryFailedNCM)?;
-            //     let _iface = accessory
-            //         .configure_ncm(NcmHelper::LINK_LOCAL_IP_PHONE)
-            //         .map_err(CarPlayPhoneGadgetError::AccessoryFailedNCM)?;
-            // }
-
-            // let (iap2_pipe, socket) = {
-            //     let Some(accessory) = self.accessory.as_ref() else {
-            //         return CarPlayPhoneGadgetError::AccessoryFailedRoleSwitch.into();
-            //     };
-
-            //     accessory
-            //         .open_iap2_pipe(self.use_usb_reset)
-            //         .map_err(CarPlayPhoneGadgetError::FailedUSBInterfaceClaim)?
-            // };
-
-            self.start_iap2().await;
             return CarPlayPhoneGadgetStatus::WaitingForIAp2Session.into();
         }
 
         if status == CarPlayPhoneGadgetStatus::WaitingForIAp2Session {
+            self.iap2_deadline = Some(update + Self::TIMEOUT_IAP2_NEGOTIATE);
             let Some(accessory) = self.accessory.as_ref() else {
                 return CarPlayPhoneGadgetError::AccessoryFailedRoleSwitch.into();
             };
 
-            let Some(iap2) = self.accessory_iap2.as_mut() else {
-                return CarPlayPhoneGadgetError::AccessoryFailedRoleSwitch.into();
-            };
-
-            if update.elapsed() > Self::TIMEOUT_IAP2_NEGOTIATE {
+            if update.elapsed() >= Self::TIMEOUT_IAP2_NEGOTIATE {
                 return CarPlayPhoneGadgetError::AccessoryFailedToInitIAp2.into();
             }
+
+            let Some(iap2) = self.accessory_iap2.as_mut() else {
+                return CarPlayPhoneGadgetStatus::WaitingForIAp2Session.into();
+            };
 
             if iap2.client_mut().status() != CsmSessionStatus::Writable {
                 return CarPlayPhoneGadgetStatus::WaitingForIAp2Session.into();
@@ -471,3 +456,42 @@ impl Reconcilable for CarPlayPhoneGadget {
         CarPlayPhoneGadgetError::UnexpectedState.into()
     }
 }
+
+// There is no background client task: dropping the stream closes the transport
+// and session before the factory can open their replacement.
+async fn reconcile_iap2_pipe<S: AsyncRead + AsyncWrite + Send>(
+    pipe: &mut Option<AsyncClientStream<S>>,
+    open: impl FnOnce() -> GadgetResult<AsyncClientStream<S>>,
+) -> PhoneResult<()> {
+    if let Some(current) = pipe.as_mut()
+        && let Err(err) = current.reconcile().await
+    {
+        if matches!(&err, CsmSessionError::Io(io_err) if io_err.raw_os_error() == Some(libc::ECONNRESET)) {
+            warn!("iAP2 transport reset; dropping client");
+            *pipe = None;
+        } else {
+            return Err(CarPlayPhoneGadgetError::AccessoryDisconnectedIAp2(err));
+        }
+    }
+
+    if pipe.is_none() {
+        match open() {
+            Ok(new) => {
+                *pipe = Some(new);
+                warn!("Started new iAP2 pipe")
+            }
+            Err(GadgetError::Io(err) | GadgetError::FailedGadgetStatusCheck(err))
+                if matches!(err.raw_os_error(), Some(libc::ENOENT | libc::ECONNRESET)) =>
+            {
+                debug!("iAP2 pipe not ready; waiting for next wakeup: {err}");
+            }
+            Err(err) => return Err(CarPlayPhoneGadgetError::FailedIap2Pipe(err)),
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "carplay_phone_gadget_tests.rs"]
+mod tests;

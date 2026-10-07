@@ -8,7 +8,6 @@ pub struct AccessoryData {
     pub pid: String,
     pub manufacturer: String,
     pub product: String,
-    pub iap2: String,
     pub ncm: Option<String>,
 }
 
