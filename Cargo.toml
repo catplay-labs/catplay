@@ -13,6 +13,7 @@ members = [
     "core/catplay_tracing_macro",
 
     "core/catplay_util",
+    "core/catplay_path",
     "core/catplay_plist",
 
     "c2a/catplay_c2a",
