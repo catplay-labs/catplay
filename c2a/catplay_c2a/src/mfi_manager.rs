@@ -1,7 +1,7 @@
-use std::{error::Error, sync::Arc, thread::spawn};
+use std::{error::Error, fs, path::Path, sync::Arc, thread::spawn};
 
 use catplay_mfi::{
-    MfiDeficeRef, MfiDevice, MfiDeviceI2C,
+    MfiDeficeRef, MfiDevice, MfiDeviceI2C, MfiDeviceLocal,
     server::{MfiDeviceRemoteClient, MfiDeviceServer},
 };
 use log::info;
@@ -28,7 +28,19 @@ impl MfiManager {
     }
 
     pub fn start(&mut self, config: &AppConfig) -> Result<(), Box<dyn Error>> {
-        let mfi: MfiDeficeRef = if let Some(mfi_client) = &config.mfi.client {
+        let local_files = config.persist_dir.as_deref().and_then(|dir| {
+            let certificate = Path::new(dir).join("certificate.p7b");
+            let identity = Path::new(dir).join("identity.pk8");
+            (certificate.is_file() && identity.is_file()).then_some((certificate, identity))
+        });
+
+        let mfi: MfiDeficeRef = if let Some((certificate, identity)) = local_files {
+            let certificate = fs::read(certificate)?;
+            let identity = fs::read(identity)?;
+            let device = MfiDeviceLocal::new(&certificate, &identity)?;
+            info!("Using local MFi backend from persist_dir (certificate.p7b + identity.pk8)");
+            Arc::new(device)
+        } else if let Some(mfi_client) = &config.mfi.client {
             Arc::new(MfiDeviceRemoteClient::new(mfi_client.remote.clone())?)
         } else if let Some(mfi_i2c) = &config.mfi.i2c {
             Arc::new(MfiDeviceI2C::new(

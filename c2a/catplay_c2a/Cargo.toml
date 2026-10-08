@@ -20,7 +20,7 @@ log = { version = "0.4.27", default-features = false, features = [
 macaddr = "1.0.1"
 
 #####
-catplay_mfi = { path = "../../core/catplay_mfi" }
+catplay_mfi = { path = "../../core/catplay_mfi", features = ["local"] }
 catplay_util = { path = "../../core/catplay_util" }
 catplay_bt = { path = "../../bluetooth/catplay_bt" }
 catplay_hap = { path = "../../core/catplay_hap" }
