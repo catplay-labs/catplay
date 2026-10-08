@@ -10,6 +10,12 @@ plist_bitflags! {
         const AUDIO                        = 1 << 9;
         /// Redundant audio packets to handle loss.
         const REDUNDANT_AUDIO              = 1 << 11;
+        /// Artwork meta data for audio streams.
+        const AUDIO_METADATA_ARTWORK       = 1 << 15;
+        /// Progress meta data for audio streams.
+        const AUDIO_METADATA_PROGRESS      = 1 << 16;
+        /// Textual meta data for audio streams.
+        const AUDIO_METADATA_TEXT          = 1 << 17;
         /// Uncompressed PCM audio data.
         const AUDIO_PCM                    = 1 << 18;
         /// ALAC audio compression. **[non-CarPlay flag]**
@@ -25,6 +31,8 @@ plist_bitflags! {
         const AUDIO_AES_128_MFI_SAP_V1     = 1 << 26;
         /// Pairing support.
         const PAIRING                      = 1 << 27;
+        /// Unified meta data in a single plist request.
+        const UNIFIED_METADATA             = 1 << 29;
         /// _airplay._tcp and _raop._tcp are unified (_raop._tcp for compatibility only).
         const UNIFIED_BONJOUR              = 1 << 30;
         /// Reserved to avoid client bugs treating this as a sign bit.
@@ -37,6 +45,22 @@ plist_bitflags! {
         const HK_PAIRING_AND_ENCRYPT       = 1 << 38;
         /// Support for Buffered audio playback
         const BUFFERED_AUDIO = 1 << 40;
+        /// Supports IEEE 1588 clock.
+        const SUPPORTS_1588_CLOCK          = 1 << 41;
+        /// Screen multi-codec support (HEVC). **[non-CarPlay flag]**
+        const SUPPORTS_SCREEN_MULTI_CODEC  = 1 << 42;
+        /// Supports system pairing.
+        const SYSTEM_PAIRING               = 1 << 43;
+        /// Supports hardware timestamps for IEEE 1588 clock.
+        const SUPPORTS_HARDWARE_1588_CLOCK = 1 << 45;
+        /// Supports HK pairing and access control.
+        const SUPPORTS_HK_PAIRING_AND_ACCESS_CONTROL = 1 << 46;
+        /// Supports HK peer management.
+        const SUPPORTS_HK_PEER_MANAGEMENT  = 1 << 47;
+        /// Supports transient pairing.
+        const TRANSIENT_PAIRING             = 1 << 48;
+        /// Supports extended message format for setting 1588 clock peers.
+        const SUPPORTS_SET_PEERS_EXTENDED_MESSAGE = 1 << 52;
 
         // FairPlay
 
@@ -46,9 +70,6 @@ plist_bitflags! {
         const VIDEO_FAIRPLAY               = 1 << 2;
         /// FairPlay secure auth supported. **[non-CarPlay flag]**
         const FPSAP_V2PT5_AES_GCM          = 1 << 12;
-
-        /// Screen multi-codec support (HEVC). **[non-CarPlay flag]**
-        const SUPPORTS_SCREEN_MULTI_CODEC  = 1 << 42;
 
     }
 }
