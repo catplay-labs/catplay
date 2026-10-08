@@ -1,3 +1,4 @@
+use super::AacError;
 use crate::{
     AudioCodec, AudioStreamBasicDescription,
     codec::{AudioDecoder, AudioDecoderFactory},
@@ -7,20 +8,6 @@ pub struct AacDecoder {
     aac: fdk_aac::dec::Decoder,
     rate: u32,
     channels: u32,
-}
-
-#[derive(thiserror::Error, Debug, Clone)]
-pub enum AacError {
-    #[error("{0}")]
-    Aac(fdk_aac::dec::DecoderError),
-    #[error("Unknown")]
-    Unknown,
-}
-
-impl From<fdk_aac::dec::DecoderError> for AacError {
-    fn from(value: fdk_aac::dec::DecoderError) -> Self {
-        Self::Aac(value)
-    }
 }
 
 fn find_frequency_index(sample_rate: u32) -> Option<u8> {
@@ -50,16 +37,12 @@ fn make_asc_lc(object_type: u8, channel_config: u8, frequency_index: u8) -> [u8;
 }
 
 fn make_asc_eld(_object_type: u8, channel_config: u8, frequency_index: u8) -> [u8; 4] {
-    let mut asc = [0u8; 4];
-    /*asc[0] = (0x1F << 3) | ((object_type & 0x38) >> 3);
-    asc[1] = ((object_type & 0x07) << 5) | ((frequency_index & 0x0F) << 1) | ((channel_config & 0x08) >> 3);
-    asc[2] = ((channel_config & 0x07) << 5) | (1 << 4);
-    asc[3] = 0;*/
-    asc[0] = 0xF8;
-    asc[1] = (0xE0) | ((frequency_index & 0x0F) << 1) | ((channel_config & 0x08) >> 3);
-    asc[2] = ((channel_config & 0x07) << 5) | (1 << 4);
-    asc[3] = 0;
-    asc
+    [
+        0xF8,
+        0xE0 | ((frequency_index & 0x0F) << 1) | ((channel_config & 0x08) >> 3),
+        ((channel_config & 0x07) << 5) | (1 << 4),
+        0,
+    ]
 }
 
 impl AudioDecoder for AacDecoder {

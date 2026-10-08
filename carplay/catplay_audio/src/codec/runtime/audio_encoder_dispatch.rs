@@ -1,6 +1,10 @@
+#[cfg(feature = "aac_enc")]
+use crate::codec::aac::AacEncoder;
+#[cfg(feature = "opus_enc")]
+use crate::codec::opus::OpusEncoder;
 use crate::{
     AudioCodec, AudioStreamBasicDescription,
-    codec::{AudioEncoder, AudioEncoderFactory, opus::OpusEncoder, pcm::PcmEncoder, runtime::CodecDispatchError},
+    codec::{AudioEncoder, AudioEncoderFactory, pcm::PcmEncoder, runtime::CodecDispatchError},
 };
 
 pub struct AudioEncoderDispatch {
@@ -8,7 +12,9 @@ pub struct AudioEncoderDispatch {
 }
 
 enum Dispatch {
-    // Aac(AacDecoder),
+    #[cfg(feature = "aac_enc")]
+    Aac(AacEncoder),
+    #[cfg(feature = "opus_enc")]
     Opus(OpusEncoder),
     Pcm(PcmEncoder),
 }
@@ -19,6 +25,9 @@ impl AudioEncoder for Dispatch {
 
     fn output_type(&self) -> AudioStreamBasicDescription {
         match self {
+            #[cfg(feature = "aac_enc")]
+            Dispatch::Aac(enc) => enc.output_type(),
+            #[cfg(feature = "opus_enc")]
             Dispatch::Opus(dec) => dec.output_type(),
             Dispatch::Pcm(dec) => dec.output_type(),
         }
@@ -26,6 +35,9 @@ impl AudioEncoder for Dispatch {
 
     fn input_type(&self) -> AudioStreamBasicDescription {
         match self {
+            #[cfg(feature = "aac_enc")]
+            Dispatch::Aac(enc) => enc.input_type(),
+            #[cfg(feature = "opus_enc")]
             Dispatch::Opus(dec) => dec.input_type(),
             Dispatch::Pcm(dec) => dec.input_type(),
         }
@@ -33,6 +45,9 @@ impl AudioEncoder for Dispatch {
 
     fn encode(&mut self, samples: &[Self::Sample], output: &mut [u8]) -> Result<(usize, usize), Self::Error> {
         match self {
+            #[cfg(feature = "aac_enc")]
+            Dispatch::Aac(enc) => Ok(enc.encode(samples, output)?),
+            #[cfg(feature = "opus_enc")]
             Dispatch::Opus(dec) => Ok(dec.encode(samples, output)?),
             Dispatch::Pcm(dec) => Ok(dec.encode(samples, output)?),
         }
@@ -41,10 +56,12 @@ impl AudioEncoder for Dispatch {
 
 impl AudioEncoderDispatch {
     pub fn has_runtime_support(codec: AudioCodec) -> bool {
-        matches!(
-            codec,
-            AudioCodec::LinearPcm | AudioCodec::Mpeg4Aac | AudioCodec::Mpeg4AacEld | AudioCodec::Opus
-        )
+        match codec {
+            AudioCodec::LinearPcm => true,
+            AudioCodec::Mpeg4Aac | AudioCodec::Mpeg4AacEld => cfg!(feature = "aac_enc"),
+            AudioCodec::Opus => cfg!(feature = "opus_enc"),
+            AudioCodec::AppleLossless => false,
+        }
     }
 }
 
@@ -58,7 +75,9 @@ impl AudioEncoderFactory for AudioEncoderDispatch {
 
         let codec = match output.format {
             AudioCodec::LinearPcm => Dispatch::Pcm(PcmEncoder::new(input, output)?),
-            // AudioCodec::Mpeg4Aac | AudioCodec::Mpeg4AacEld => Dispatch::Aac?),
+            #[cfg(feature = "aac_enc")]
+            AudioCodec::Mpeg4Aac | AudioCodec::Mpeg4AacEld => Dispatch::Aac(AacEncoder::new(input, output)?),
+            #[cfg(feature = "opus_enc")]
             AudioCodec::Opus => Dispatch::Opus(OpusEncoder::new(input, output)?),
             _ => return Err(CodecDispatchError::UnsupportedCodec(input.format, output.format)),
         };

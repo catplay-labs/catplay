@@ -1,3 +1,4 @@
+use super::OpusError;
 use crate::{
     AudioStreamBasicDescription,
     codec::{AudioDecoder, AudioDecoderFactory},
@@ -7,20 +8,6 @@ pub struct OpusDecoder {
     opus: opus2::Decoder,
     channels: usize,
     sample_rate: usize,
-}
-
-#[derive(thiserror::Error, Debug, Clone)]
-pub enum OpusError {
-    #[error("{0}: {0}")]
-    Opus(&'static str, &'static str),
-    #[error("Overflow (channel mismatch?): {0} > {1}")]
-    Overflow(usize, usize),
-}
-
-impl From<opus2::Error> for OpusError {
-    fn from(value: opus2::Error) -> Self {
-        Self::Opus(value.function(), value.description())
-    }
 }
 
 impl AudioDecoderFactory for OpusDecoder {

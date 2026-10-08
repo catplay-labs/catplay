@@ -3,6 +3,14 @@ name = "catplay_audio"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["aac_enc", "aac_dec", "opus_enc", "opus_dec", "alac"]
+aac_enc = ["dep:fdk-aac-sys"]
+aac_dec = ["dep:fdk-aac"]
+opus_enc = ["dep:opus2"]
+opus_dec = ["dep:opus2"]
+alac = ["dep:alac"]
+
 [dependencies]
 catplay_ring = { path = "../catplay_ring" }
 
@@ -10,6 +18,14 @@ bitflags = { version = "2.9.1" }
 log = "0.4.27"
 thiserror = "2.0.14"
 
-opus2 = "0.3.3"
-fdk-aac = "0.8.0"
-alac = "0.5.0"
+# Use "dynamic" feature to force using libopus from the system or bitbake
+opus2 = { version = "0.3.3", default-features = false, features = ["dynamic"], optional = true }
+# fdk-aac/fdk-aac-sys crates cannot be forced to use system-level library
+# so there is an entry in parent Cargo.toml to force it to -O3 instead of -Oz
+fdk-aac = { version = "0.8.0", optional = true }
+fdk-aac-sys = { version = "0.5.0", optional = true }
+alac = { version = "0.5.0", optional = true }
+
+[[bench]]
+name = "audio_codecs"
+required-features = ["aac_enc", "aac_dec", "opus_enc", "opus_dec"]
