@@ -19,6 +19,7 @@ use catplay_util::{
 use log::{debug, error, info};
 use tokio::sync::Mutex as TokioMutex;
 
+use crate::iap2_bridge::Iap2Bridge;
 use crate::proxy_rpc::{CarManager, CarPlayRxSession, TxAdapter, TxAdapterOp};
 
 pub struct ProdGadgetConfig {
@@ -53,6 +54,8 @@ pub struct ProdGadget {
 
     last_tx: Arc<Mutex<Option<ProdGadgetSession>>>,
     burst_wakeups: bool,
+
+    iap2_bridge: Iap2Bridge,
 }
 
 #[derive(Clone, PartialEq, Debug, thiserror::Error)]
@@ -112,6 +115,7 @@ impl ProdGadget {
                 pending_transmitter: Default::default(),
                 last_tx: Default::default(),
                 burst_wakeups: false,
+                iap2_bridge: Iap2Bridge::start(),
             },
             Ok(ProdGadgetState::Initial),
         )
@@ -219,6 +223,8 @@ impl Reconcilable for ProdGadget {
                 Some(&self.cfg.bt_cache_file),
                 {
                     let car = self.last_tx.clone();
+                    let mfi = self.cfg.mfi.clone();
+                    let phone_events = self.iap2_bridge.phone_events();
 
                     move || {
                         let Some(car) = car.lock().unwrap().clone() else {
@@ -226,7 +232,7 @@ impl Reconcilable for ProdGadget {
                         };
 
                         let sess = TxAdapter::new(car.proxy_tx.clone());
-                        CarPlayRxSession::new(sess)
+                        CarPlayRxSession::new(sess, mfi.clone(), phone_events.clone())
                     }
                 },
             ));
@@ -239,6 +245,7 @@ impl Reconcilable for ProdGadget {
                 self.cfg.udc_tx.as_deref(),
                 self.cfg.homekit_tx.clone(),
                 false,
+                Some(self.iap2_bridge.head_unit_events()),
             )
             .map_err(|err| LocalError::FailedToSetupUsbClient(err))?;
             self.tx.replace(gadget);

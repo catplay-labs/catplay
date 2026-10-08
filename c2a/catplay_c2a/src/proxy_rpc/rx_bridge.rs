@@ -9,21 +9,28 @@ use catplay_carplay::{
     rtsp_frame::{RtspError, RtspResponse, RtspResult},
     screen::rx::ScreenReceiverSinkBox,
 };
+use catplay_carplay_rx_gadget::{CarPlayServerSession, CarPlayServerSessionEventTx, CarPlaySessionIdentity};
 use catplay_iap2_client::CsmSessionBox;
-use catplay_util::{AsyncShutdown, EventReconciler, EventSleeper};
+use catplay_mfi::MfiDeficeRef;
+use catplay_util::{AsyncShutdown, EventReconciler, EventSleeper, mpsc};
+use log::info;
 
 use crate::proxy_rpc::tx_adapter::TxAdapter;
 
 pub struct CarPlayRxSession {
     tx: Option<TxAdapter>,
+    mfi: Option<MfiDeficeRef>,
+    phone_events: Option<mpsc::UnboundedSender<CarPlayServerSessionEventTx>>,
     handle: Option<AirPlayReceiverHandleRef>,
     reject: bool,
 }
 
 impl CarPlayRxSession {
-    pub fn new(tx: TxAdapter) -> Self {
+    pub fn new(tx: TxAdapter, mfi: Option<MfiDeficeRef>, phone_events: mpsc::UnboundedSender<CarPlayServerSessionEventTx>) -> Self {
         Self {
             tx: Some(tx),
+            mfi,
+            phone_events: Some(phone_events),
             handle: None,
             reject: false,
         }
@@ -32,6 +39,8 @@ impl CarPlayRxSession {
     pub fn reject() -> Self {
         Self {
             tx: None,
+            mfi: None,
+            phone_events: None,
             handle: None,
             reject: true,
         }
@@ -91,7 +100,20 @@ impl AirPlayReceiverSink for CarPlayRxSession {
     }
 
     async fn open_iap2(&mut self) -> Option<CsmSessionBox> {
-        None
+        let phone_events = self.phone_events.clone()?;
+        let identity = CarPlaySessionIdentity {
+            display_name: "CatPlay".into(),
+            wants_now_playing: true,
+            over_wireless_carplay: true,
+            ..CarPlaySessionIdentity::default()
+        };
+
+        info!("Opening iAP2 session over wireless CarPlay");
+        Some(Box::new(CarPlayServerSession::with_event_sink(
+            self.mfi.clone(),
+            identity,
+            phone_events,
+        )))
     }
 
     async fn on_info(&mut self, info: &mut InfoMessageResponse) {

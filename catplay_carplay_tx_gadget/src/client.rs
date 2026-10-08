@@ -17,12 +17,12 @@ use catplay_hap::HomekitStorageRef;
 use catplay_iap2_usb::GadgetResult;
 use catplay_iap2_usb_host::{CarPlayPhoneGadget, CarPlayPhoneGadgetError, CarPlayPhoneGadgetStatus};
 use catplay_util::{
-    ArcBox, AsyncShutdown, EventReconciler, EventSleeper, LazyAsync, Reconcilable, Reconciler, deadline_after, event_select,
+    ArcBox, AsyncShutdown, EventReconciler, EventSleeper, LazyAsync, Reconcilable, Reconciler, deadline_after, event_select, mpsc,
     notify::Notify, sleeper,
 };
 use log::{debug, error, info, warn};
 
-use crate::carplay_client_session::CarPlayClientSession;
+use crate::carplay_client_session::{CarPlayClientSession, CarPlayClientSessionEventTx};
 
 /// CarPlay transmitter (iPhone)
 pub struct CarPlayUsbClientGadget {
@@ -53,8 +53,9 @@ impl CarPlayUsbClientGadget {
         udc: Option<&str>,
         homekit: HomekitStorageRef,
         pinned: bool,
+        events: Option<mpsc::UnboundedSender<CarPlayClientSessionEventTx>>,
     ) -> GadgetResult<Reconciler<Self>> {
-        let g = CarPlayPhoneGadget::new_with_csm(udc, iphone_instance, pinned, || CarPlayClientSession::default())?;
+        let g = CarPlayPhoneGadget::new_with_csm(udc, iphone_instance, pinned, move || CarPlayClientSession::new(events.clone()))?;
         Ok(Reconciler::new(
             Self {
                 g,

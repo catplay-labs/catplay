@@ -7,18 +7,101 @@ use catplay_csm::{
     msg::*,
 };
 use catplay_iap2_client::{CsmClientHandleRef, CsmSession, CsmSessionResult};
+use catplay_util::mpsc;
 use log::debug;
 
-#[derive(Default)]
+/// What the head-unit side tells the rest of the dongle.
+pub enum CarPlayClientSessionEventTx {
+    /// The head unit's iAP2 session is up; the handle can be used to send to the head unit.
+    SessionStarted(CsmClientHandleRef),
+    /// The head unit asked for NowPlaying updates.
+    NowPlayingRequested,
+    /// The head unit no longer wants NowPlaying updates.
+    NowPlayingStopped,
+    /// The head unit's iAP2 session is gone.
+    SessionEnded,
+}
+
+/// NowPlaying that tells the head unit nothing is playing (no artwork).
+pub fn now_playing_cleared() -> NowPlayingUpdate {
+    NowPlayingUpdate {
+        media_item: Some(MediaItem {
+            persistent_id: Some(0),
+            title: Some("".into()),
+            playback_duration_in_ms: Some(0),
+            album_title: Some("".into()),
+            album_track_number: Some(0),
+            album_track_count: Some(0),
+            album_disc_number: Some(0),
+            album_disc_count: Some(0),
+            artist: Some("".into()),
+            genre: Some("".into()),
+            composer: Some("".into()),
+            is_like_supported: Some(false),
+            is_ban_supported: Some(false),
+            is_liked: Some(false),
+            is_banned: Some(false),
+            is_resident_on_device: None,
+            artwork_file_transfer_id: None,
+            chapter_count: Some(0),
+            ..MediaItem::default()
+        }),
+        playback_attributes: Some(PlaybackAttributes {
+            playback_status: Some(PlaybackStatus::Stopped),
+            playback_elapsed_time_ms: Some(0),
+            playback_queue_index: Some(0),
+            playback_queue_count: Some(0),
+            playback_queue_chapter_index: Some(0),
+            playback_shuffle_mode: Some(PlaybackShuffle::Off),
+            playback_repeat_mode: Some(PlaybackRepeat::Off),
+            playback_app_name: Some("".into()),
+            pb_media_library_unique_identifier: Some("".into()),
+            pb_apple_music_radio_ad: Some(false),
+            pb_apple_music_radio_station_name: Some("".into()),
+            pb_apple_music_radio_station_media_playlist_id: Some(0),
+            playback_speed: Some(0),
+            set_elapsed_time_available: Some(false),
+            playback_queue_list_available: Some(false),
+            playback_queue_list_transfer_id: None,
+            playback_app_bundle_id: Some("".into()),
+            ..PlaybackAttributes::default()
+        }),
+    }
+}
+
 pub struct CarPlayClientSession {
     power_sub: bool,
     power_draw: Option<u16>,
     flushed_power: bool,
     start: Option<Instant>,
     artwork_tx: Option<u8>,
+    events: Option<mpsc::UnboundedSender<CarPlayClientSessionEventTx>>,
+}
+
+impl Default for CarPlayClientSession {
+    fn default() -> Self {
+        Self::new(None)
+    }
 }
 
 impl CarPlayClientSession {
+    pub fn new(events: Option<mpsc::UnboundedSender<CarPlayClientSessionEventTx>>) -> Self {
+        Self {
+            power_sub: false,
+            power_draw: None,
+            flushed_power: false,
+            start: None,
+            artwork_tx: None,
+            events,
+        }
+    }
+
+    fn publish(&self, event: CarPlayClientSessionEventTx) {
+        if let Some(events) = &self.events {
+            let _ = events.unbounded_send(event);
+        }
+    }
+
     pub fn send(&mut self, packet: &dyn AsCsmPacket, handle: &CsmClientHandleRef) -> CsmSessionResult<()> {
         debug!(
             "<- Outgoing packet @ {:?}: {:?}",
@@ -34,48 +117,12 @@ impl CarPlayClientSession {
         let next_tx = handle.send_file_reserve();
 
         let reset = [
-            NowPlayingUpdate {
-                media_item: Some(MediaItem {
-                    persistent_id: Some(0),
-                    title: Some("".into()),
-                    playback_duration_in_ms: Some(0),
-                    album_title: Some("".into()),
-                    album_track_number: Some(0),
-                    album_track_count: Some(0),
-                    album_disc_number: Some(0),
-                    album_disc_count: Some(0),
-                    artist: Some("".into()),
-                    genre: Some("".into()),
-                    composer: Some("".into()),
-                    is_like_supported: Some(false),
-                    is_ban_supported: Some(false),
-                    is_liked: Some(false),
-                    is_banned: Some(false),
-                    is_resident_on_device: None,
-                    artwork_file_transfer_id: first_tx,
-                    chapter_count: Some(0),
-                    ..MediaItem::default()
-                }),
-                playback_attributes: Some(PlaybackAttributes {
-                    playback_status: Some(PlaybackStatus::Stopped),
-                    playback_elapsed_time_ms: Some(0),
-                    playback_queue_index: Some(0),
-                    playback_queue_count: Some(0),
-                    playback_queue_chapter_index: Some(0),
-                    playback_shuffle_mode: Some(PlaybackShuffle::Off),
-                    playback_repeat_mode: Some(PlaybackRepeat::Off),
-                    playback_app_name: Some("".into()),
-                    pb_media_library_unique_identifier: Some("".into()),
-                    pb_apple_music_radio_ad: Some(false),
-                    pb_apple_music_radio_station_name: Some("".into()),
-                    pb_apple_music_radio_station_media_playlist_id: Some(0),
-                    playback_speed: Some(0),
-                    set_elapsed_time_available: Some(false),
-                    playback_queue_list_available: Some(false),
-                    playback_queue_list_transfer_id: None,
-                    playback_app_bundle_id: Some("".into()),
-                    ..PlaybackAttributes::default()
-                }),
+            {
+                let mut np = now_playing_cleared();
+                if let Some(item) = np.media_item.as_mut() {
+                    item.artwork_file_transfer_id = first_tx;
+                }
+                np
             },
             NowPlayingUpdate {
                 media_item: None,
@@ -158,6 +205,7 @@ impl CsmSession for CarPlayClientSession {
             self.start.replace(Instant::now());
         }
 
+        self.publish(CarPlayClientSessionEventTx::SessionStarted(_handle.clone()));
         self.send(&StartIdentification::default(), &_handle)?;
         Ok(())
     }
@@ -251,6 +299,11 @@ impl CsmSession for CarPlayClientSession {
         if let Some(snpu) = packet.cast::<StartNowPlayingUpdates>() {
             debug!("Got now playing request??: {snpu:?}");
             self.send_now_playing(_handle.clone())?;
+            self.publish(CarPlayClientSessionEventTx::NowPlayingRequested);
+        }
+
+        if packet.cast::<StopNowPlayingUpdates>().is_some() {
+            self.publish(CarPlayClientSessionEventTx::NowPlayingStopped);
         }
 
         if let Some(_spu) = packet.cast::<StartPowerUpdates>() {
@@ -329,5 +382,78 @@ impl CsmSession for CarPlayClientSession {
         }
 
         Ok(())
+    }
+}
+
+impl Drop for CarPlayClientSession {
+    fn drop(&mut self) {
+        self.publish(CarPlayClientSessionEventTx::SessionEnded);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Head-unit handle for tests that must not touch the link.
+    struct NoLinkHandle(catplay_iap2_client::CsmRemote);
+
+    impl catplay_iap2_client::CsmClientHandle for NoLinkHandle {
+        fn disconnect(&self) {}
+        fn is_server(&self) -> bool {
+            false
+        }
+        fn is_closed(&self) -> bool {
+            false
+        }
+        fn is_writable(&self) -> bool {
+            true
+        }
+        fn remote(&self) -> &catplay_iap2_client::CsmRemote {
+            &self.0
+        }
+        fn status(&self) -> catplay_iap2_client::CsmSessionStatus {
+            Default::default()
+        }
+        fn send(&self, _packet: &dyn AsCsmPacket) -> CsmSessionResult<()> {
+            panic!("unexpected send to the head unit")
+        }
+        fn send_all(&self, _packets: &[CsmPacketBox]) -> CsmSessionResult<()> {
+            panic!("unexpected send to the head unit")
+        }
+        fn send_file_reserve(&self) -> Option<u8> {
+            None
+        }
+        fn send_file(&self, _file_id: u8, _file_type: u16, _setup_data: &[u8], _source: Vec<u8>) {}
+    }
+
+    #[test]
+    fn stop_now_playing_updates_publishes_now_playing_stopped() {
+        let (tx, mut rx) = catplay_util::mpsc::unbounded();
+        let mut session = CarPlayClientSession::new(Some(tx));
+        let handle: CsmClientHandleRef = std::sync::Arc::new(NoLinkHandle(catplay_iap2_client::CsmRemote::airplay()));
+
+        futures::executor::block_on(session.respond(StopNowPlayingUpdates {}.into(), handle)).unwrap();
+
+        assert!(matches!(rx.try_next(), Ok(Some(CarPlayClientSessionEventTx::NowPlayingStopped))));
+    }
+
+    #[test]
+    fn cleared_now_playing_is_stopped_empty_and_has_no_artwork() {
+        let np = now_playing_cleared();
+        let item = np.media_item.expect("media item");
+        assert_eq!(item.title, Some("".into()));
+        assert_eq!(item.artwork_file_transfer_id, None);
+        assert_eq!(
+            np.playback_attributes.expect("attributes").playback_status,
+            Some(PlaybackStatus::Stopped)
+        );
+    }
+
+    #[test]
+    fn dropping_session_publishes_session_ended() {
+        let (tx, mut rx) = catplay_util::mpsc::unbounded();
+        drop(CarPlayClientSession::new(Some(tx)));
+        assert!(matches!(rx.try_next(), Ok(Some(CarPlayClientSessionEventTx::SessionEnded))));
     }
 }
