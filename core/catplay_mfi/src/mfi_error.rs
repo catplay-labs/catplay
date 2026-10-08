@@ -26,6 +26,18 @@ pub enum MfiI2cError {
     #[error("MFI unexpected data size: {0}")]
     UnexpectedSize(usize),
 
+    #[cfg(feature = "local")]
+    #[error("Invalid local MFi P-256 PKCS#8 private key")]
+    InvalidLocalKey,
+
+    #[cfg(feature = "local")]
+    #[error("Invalid local MFi challenge size: expected 32 bytes, got {0}")]
+    InvalidChallengeSize(usize),
+
+    #[cfg(feature = "local")]
+    #[error("Local MFi ECDSA signing failed")]
+    LocalSigning,
+
     #[error("Other MFI error: {0}")]
     Other(String),
 

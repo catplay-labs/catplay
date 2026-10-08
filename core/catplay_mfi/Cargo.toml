@@ -8,3 +8,7 @@ libc = "0.2.186"
 log = "0.4.27"
 socket2 = "0.6.1"
 thiserror = "2.0.12"
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8"], optional = true }
+
+[features]
+local = ["dep:p256"]
