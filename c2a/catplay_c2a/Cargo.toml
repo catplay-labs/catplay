@@ -24,7 +24,7 @@ catplay_mfi = { path = "../../core/catplay_mfi" }
 catplay_util = { path = "../../core/catplay_util" }
 catplay_bt = { path = "../../bluetooth/catplay_bt" }
 catplay_hap = { path = "../../core/catplay_hap" }
-catplay_carplay = { path = "../../carplay/catplay_carplay" }
+catplay_carplay = { path = "../../carplay/catplay_carplay", features = ["screen_skip_poly_best_effort"] }
 catplay_iap2_usb = { path = "../../usb/catplay_iap2_usb" }
 # catplay_iap2_usb_gadget = { path = "../../usb/catplay_iap2_usb_gadget" }
 catplay_iap2_usb_host = { path = "../../usb/catplay_iap2_usb_host" }
