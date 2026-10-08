@@ -59,6 +59,11 @@ pub struct CarPlaySessionIdentity {
 
     /// Whether NowPlaying should be subscribed; useless for a temporary Bluetooth connection during CarPlay pairing.
     pub wants_now_playing: bool,
+
+    /// The session runs inside a wireless CarPlay session (iAP2 over the AirPlay events channel).
+    /// The iPhone rejects an Identify without `WirelessCarPlayTransportComponent` there, even though
+    /// no Wi-Fi credentials are exchanged on this channel.
+    pub over_wireless_carplay: bool,
 }
 
 impl Default for CarPlaySessionIdentity {
@@ -80,12 +85,18 @@ impl Default for CarPlaySessionIdentity {
             is_usb_transport: false,
             has_gps: false,
             wants_now_playing: false,
+            over_wireless_carplay: false,
         }
     }
 }
 
 #[allow(clippy::large_enum_variant)]
 pub enum CarPlayServerSessionEventTx {
+    /// The iAP2 session with the iPhone is up; the handle can be used to send to the iPhone.
+    SessionStarted(CsmClientHandleRef),
+    /// The iAP2 session with the iPhone is gone.
+    SessionEnded,
+
     /// iPhone requests regular GPS updates.
     StartLocationInformation(StartLocationInformation),
     /// iPhone no longer needs regular GPS updates.
@@ -206,6 +217,37 @@ impl CarPlayServerSession {
         }
 
         self.publish(CarPlayServerSessionEventTx::NowPlayingMerged(self.now_playing.clone().unwrap()));
+    }
+
+    /// NowPlaying subscription sent to the iPhone. Inside wireless CarPlay the session asks for no
+    /// file transfers (artwork, queue list): they would cross the same Wi-Fi link as the video and
+    /// are sized by the phone, and nothing on that path consumes them.
+    pub fn now_playing_request(identity: &CarPlaySessionIdentity) -> StartNowPlayingUpdates {
+        let mut req = StartNowPlayingUpdates::all();
+        if identity.over_wireless_carplay {
+            if let Some(attributes) = req.attributes.as_mut() {
+                attributes.artwork_file_transfer_id = CsmFlag::No;
+            }
+            if let Some(playback) = req.playback_attributes.as_mut() {
+                playback.playback_queue_list_avail = CsmFlag::No;
+                playback.playback_queue_list_transfer_id = CsmFlag::No;
+                playback.playback_queue_list_content_transfer_size = None;
+            }
+            req.playback_queue_list_content_transfer_info_request = None;
+        }
+        req
+    }
+
+    /// Like `new()`, but publishes outbound events to an existing sender (e.g. a bridge shared by
+    /// successive sessions) instead of returning a fresh receiver.
+    pub fn with_event_sink(
+        mfi: Option<MfiDeficeRef>,
+        identity: CarPlaySessionIdentity,
+        events: mpsc::UnboundedSender<CarPlayServerSessionEventTx>,
+    ) -> Self {
+        let (mut session, _events_rx_tx, _events_tx_rx) = Self::new(mfi, identity);
+        session.events_tx = events;
+        session
     }
 
     pub fn new(
@@ -375,7 +417,7 @@ impl CarPlayServerSession {
             }];
         }
 
-        if identity.wifi_ssid.is_some() {
+        if identity.wifi_ssid.is_some() || identity.over_wireless_carplay {
             id.wireless_car_play_transport_component = vec![WirelessCarPlayTransportComponent {
                 transport_component_identifier: 2,
                 transport_component_name: "IAP2-Wireless".into(),
@@ -406,7 +448,8 @@ impl CarPlayServerSession {
 
 #[async_trait]
 impl CsmSession for CarPlayServerSession {
-    async fn start(&mut self, _handle: CsmClientHandleRef) -> CsmSessionResult<()> {
+    async fn start(&mut self, handle: CsmClientHandleRef) -> CsmSessionResult<()> {
+        self.publish(CarPlayServerSessionEventTx::SessionStarted(handle));
         Ok(())
     }
 
@@ -467,7 +510,7 @@ impl CsmSession for CarPlayServerSession {
             // })?;
 
             if self.identity.wants_now_playing {
-                _handle.send(&StartNowPlayingUpdates::all())?;
+                _handle.send(&Self::now_playing_request(&self.identity))?;
             }
         }
 
@@ -493,5 +536,78 @@ impl CsmSession for CarPlayServerSession {
         }
 
         return Ok(());
+    }
+}
+
+impl Drop for CarPlayServerSession {
+    fn drop(&mut self) {
+        self.publish(CarPlayServerSessionEventTx::SessionEnded);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn carplay_channel_now_playing_request_skips_file_transfers() {
+        let identity = CarPlaySessionIdentity {
+            wants_now_playing: true,
+            over_wireless_carplay: true,
+            ..CarPlaySessionIdentity::default()
+        };
+        let req = CarPlayServerSession::now_playing_request(&identity);
+
+        let attrs = req.attributes.expect("media item attributes");
+        assert_eq!(attrs.artwork_file_transfer_id, CsmFlag::No);
+        assert_eq!(attrs.title, CsmFlag::Yes);
+        let playback = req.playback_attributes.expect("playback attributes");
+        assert_eq!(playback.playback_queue_list_avail, CsmFlag::No);
+        assert_eq!(playback.playback_queue_list_transfer_id, CsmFlag::No);
+        assert_eq!(playback.playback_queue_list_content_transfer_size, None);
+        assert!(
+            req.playback_queue_list_content_transfer_info_request
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn other_transports_keep_the_full_now_playing_request() {
+        let req = CarPlayServerSession::now_playing_request(&CarPlaySessionIdentity::default());
+        assert_eq!(req, StartNowPlayingUpdates::all());
+    }
+
+    #[test]
+    fn carplay_channel_identify_declares_wireless_transport_without_wifi() {
+        let identity = CarPlaySessionIdentity {
+            over_wireless_carplay: true,
+            ..CarPlaySessionIdentity::default()
+        };
+        let id = CarPlayServerSession::id(&identity);
+
+        assert_eq!(id.wireless_car_play_transport_component.len(), 1);
+        assert_eq!(
+            id.wireless_car_play_transport_component[0].transport_supports_car_play,
+            CsmFlag::Yes
+        );
+        assert_eq!(
+            id.wireless_car_play_transport_component[0].transport_supports_iap2_connection,
+            CsmFlag::Yes
+        );
+    }
+
+    #[test]
+    fn dropping_session_publishes_session_ended() {
+        let (tx, mut rx) = mpsc::unbounded();
+        let session = CarPlayServerSession::with_event_sink(None, CarPlaySessionIdentity::default(), tx);
+        drop(session);
+
+        assert!(matches!(rx.try_next(), Ok(Some(CarPlayServerSessionEventTx::SessionEnded))));
+    }
+
+    #[test]
+    fn default_identity_declares_no_wireless_transport() {
+        let id = CarPlayServerSession::id(&CarPlaySessionIdentity::default());
+        assert!(id.wireless_car_play_transport_component.is_empty());
     }
 }

@@ -3,6 +3,7 @@
 mod config;
 mod cp_output_manager;
 mod homekit_manager;
+mod iap2_bridge;
 mod main_init;
 mod mfi_manager;
 mod prod_gadget;

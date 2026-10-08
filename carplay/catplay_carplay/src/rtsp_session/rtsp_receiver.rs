@@ -99,6 +99,21 @@ pub trait RtspReceiverCallback:
 {
 }
 
+/// The iPhone sends requests from more than one queue over the same connection, so a request can
+/// arrive just after one with a higher CSeq (an iAP2 `POST /command` overtaken by `SETUP`). Such
+/// small reordering is accepted; a repeated or much older CSeq still fails the session.
+const CSEQ_REORDER_WINDOW: u32 = 8;
+
+/// Returns the newest CSeq seen so far.
+fn check_cseq(newest: Option<u32>, cseq: u32) -> RtspResult<u32> {
+    match newest {
+        None => Ok(cseq),
+        Some(newest) if cseq > newest => Ok(cseq),
+        Some(newest) if cseq < newest && newest - cseq <= CSEQ_REORDER_WINDOW => Ok(newest),
+        Some(newest) => Err(RtspError::CSeqSanity(cseq, newest)),
+    }
+}
+
 impl<T: RtspReceiverCallback> RtspReceiver<T> {
     const RESPONSE_PAYLOAD_CACHE_MAX: usize = 4096;
     // Some CarPlay dongles violate CSeq sanity so changing this allows communication with them.
@@ -162,11 +177,15 @@ impl<T: RtspReceiverCallback> TcpSession for RtspReceiver<T> {
 
             let cseq = req.cseq.unwrap();
 
-            if Self::ENFORCE_CSEQ_SANITY && self.last_cseq.is_some() && cseq <= self.last_cseq.unwrap() {
-                return Err(RtspError::CSeqSanity(cseq, self.last_cseq.unwrap()));
+            if Self::ENFORCE_CSEQ_SANITY {
+                let newest = check_cseq(self.last_cseq, cseq)?;
+                if newest != cseq {
+                    warn!("Request CSeq {cseq} arrived after CSeq {newest}, accepting the reordering");
+                }
+                self.last_cseq.replace(newest);
+            } else {
+                self.last_cseq.replace(cseq);
             }
-
-            self.last_cseq.replace(cseq);
 
             self.payload_response_cache.clear();
             self.payload_response_cache
@@ -260,5 +279,36 @@ impl<T: RtspReceiverCallback> EventSleeper for RtspReceiver<T> {
 impl<T: RtspReceiverCallback> AsyncShutdown for RtspReceiver<T> {
     async fn shutdown(&mut self) {
         self.callback.shutdown().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_request_sets_the_newest_cseq() {
+        assert_eq!(check_cseq(None, 1).unwrap(), 1);
+    }
+
+    #[test]
+    fn increasing_cseq_is_accepted() {
+        assert_eq!(check_cseq(Some(16), 18).unwrap(), 18);
+    }
+
+    #[test]
+    fn request_overtaken_by_a_newer_one_is_accepted() {
+        // iPhone with iAP2 over CarPlay: POST /command CSeq 17 arrives after SETUP CSeq 18
+        assert_eq!(check_cseq(Some(18), 17).unwrap(), 18);
+    }
+
+    #[test]
+    fn repeated_newest_cseq_is_rejected() {
+        assert!(matches!(check_cseq(Some(18), 18), Err(RtspError::CSeqSanity(18, 18))));
+    }
+
+    #[test]
+    fn cseq_far_behind_the_newest_is_rejected() {
+        assert!(matches!(check_cseq(Some(100), 5), Err(RtspError::CSeqSanity(5, 100))));
     }
 }

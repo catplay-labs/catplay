@@ -41,7 +41,7 @@ async fn test_gadget_handshake() -> Result<(), Box<dyn Error>> {
     let hk = HomekitStorageFile::memory();
     let hk_rx = HomekitStorageFile::memory();
 
-    let mut gadget = CarPlayUsbClientGadget::new("default", "bonjour_id", Some("dummy_udc.0"), hk.clone(), false)?;
+    let mut gadget = CarPlayUsbClientGadget::new("default", "bonjour_id", Some("dummy_udc.0"), hk.clone(), false, None)?;
 
     let shared = AirPlayServerShared::new();
     let mut gadget_hu = CarPlayUsbGadget::new(hk_rx.clone(), None, shared, Some("dummy_udc.1"), false, "name", || MockSink {});

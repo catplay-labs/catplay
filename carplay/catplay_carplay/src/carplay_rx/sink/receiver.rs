@@ -110,6 +110,7 @@ pub struct AirPlayReceiver {
 
 #[derive(Default, AsyncShutdown, EventSleeper, EventReconciler)]
 #[reconcile_error(AirPlayReceiverSessionError)]
+#[reconcile_func(reconcile_iap2)]
 struct Streams {
     #[sleep]
     #[reconcile(AirPlayReceiverSessionError::KeepAlive)]
@@ -139,12 +140,26 @@ struct Streams {
 
     #[sleep]
     #[shutdown(take)]
-    #[reconcile]
     iap2: Option<AsyncClient>,
     #[sleep]
     iap2_drain: Option<AsyncClientDrain>,
 
     handle: Option<AirPlayReceiverHandleRef>,
+}
+
+impl Streams {
+    /// iAP2 rides on the CarPlay session but must not be able to end it: a failing iAP2 session is
+    /// closed on its own and CarPlay video/audio keep running.
+    async fn reconcile_iap2(&mut self) -> Result<(), AirPlayReceiverSessionError> {
+        if let Some(iap2) = self.iap2.as_mut()
+            && let Err(err) = iap2.reconcile().await
+        {
+            warn!("iAP2 session over CarPlay failed, closing it and keeping CarPlay running: {err}");
+            self.iap2.take();
+            self.iap2_drain.take();
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -590,9 +605,13 @@ impl AirPlayReceiver {
             && let Some(packet) = drain.take()
         {
             debug!("Forwarding iAP2 packet");
-            let fut = handle.send_command(Command::IApSendMessage(CommandIApSendMessage {
+            // The iAP2 link starts before the iPhone has connected the events channel. A frame that
+            // cannot be sent yet is dropped; the iAP2 link layer retransmits until acknowledged.
+            if let Err(err) = handle.send_command(Command::IApSendMessage(CommandIApSendMessage {
                 data: packet.into_inner().into(),
-            }))?;
+            })) {
+                debug!("Dropped iAP2 frame to iPhone, events channel not ready: {err}");
+            }
         }
 
         Ok(())
