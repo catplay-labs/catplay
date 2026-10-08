@@ -3,7 +3,7 @@ use crate::{
     modes::ChangeModes,
     msg::{AudioFormat, AudioType, DisplayFeature, ExtendedFeature, LimitedUIElement, PrimaryInputDevice, StreamType},
 };
-use catplay_plist::{FlexBool, PlistByteArray, plist_struct};
+use catplay_plist::{FlexBool, PlistByteArray, downcast_enum_to_legacy_u64, plist_struct};
 
 plist_struct! {
     pub struct InfoMessage {
@@ -90,7 +90,9 @@ plist_struct! {
 
 plist_struct! {
     pub struct AudioFormatStruct {
+        #[serde(default, with = "downcast_enum_to_legacy_u64::option")]
         pub audio_input_formats: Option<AudioFormat>,
+        #[serde(default, with = "downcast_enum_to_legacy_u64::option")]
         pub audio_output_formats: Option<AudioFormat>,
         #[serde(rename = "type")]
         pub stream_type: StreamType,
@@ -142,6 +144,40 @@ impl Display {
         };
 
         dpi.clamp(MIN_DPI, MAX_DPI)
+    }
+}
+
+#[cfg(test)]
+mod audio_format_tests {
+    use super::*;
+    use catplay_plist::{Dictionary, Value, from_bytes, to_writer_binary};
+
+    #[test]
+    fn info_audio_formats_keep_only_low_64_bits_on_wire() {
+        let formats = AudioFormatStruct {
+            audio_input_formats: Some(AudioFormat::PCM_48000_STEREO | AudioFormat::APAC_48000_STEREO),
+            audio_output_formats: Some(AudioFormat::APAC_48000_STEREO),
+            stream_type: StreamType::MainAudio,
+            audio_type: Some(AudioType::Default),
+        };
+        let mut binary = Vec::new();
+        to_writer_binary(&mut binary, &formats).unwrap();
+        let decoded: AudioFormatStruct = from_bytes(&binary).unwrap();
+        assert_eq!(decoded.audio_input_formats, Some(AudioFormat::PCM_48000_STEREO));
+        assert_eq!(decoded.audio_output_formats, Some(AudioFormat::empty()));
+
+        // Values observed in the accessory's /info response.
+        let response_entry = Value::Dictionary(Dictionary::from_iter([
+            ("audioInputFormats", Value::from(84u64)),
+            ("audioOutputFormats", Value::from(34_900u64)),
+            ("type", Value::from(100u64)),
+        ]));
+        binary.clear();
+        to_writer_binary(&mut binary, &response_entry).unwrap();
+        let decoded: AudioFormatStruct = from_bytes(&binary).unwrap();
+        assert_eq!(decoded.audio_input_formats.unwrap().bits(), 84);
+        assert_eq!(decoded.audio_output_formats.unwrap().bits(), 34_900);
+        assert_eq!(decoded.stream_type, StreamType::MainAudio);
     }
 }
 

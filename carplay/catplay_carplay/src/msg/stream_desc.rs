@@ -4,7 +4,7 @@ use crate::{
     common::AirPlayCompressionType,
     msg::{AudioFormat, AudioType, StreamType},
 };
-use catplay_plist::{plist_enum_untagged, plist_struct, u64_as_i64};
+use catplay_plist::{downcast_enum_to_legacy_u64, plist_enum_untagged, plist_struct, u64_as_i64};
 
 plist_struct! {
     pub struct StreamDescriptionAudio {
@@ -16,6 +16,7 @@ plist_struct! {
         #[serde(rename = "type")]
         pub stream_type: StreamType,
 
+        #[serde(with = "downcast_enum_to_legacy_u64")]
         pub audio_format: AudioFormat,
         pub audio_latency_ms: u64,
         pub audio_loopback: Option<bool>,
@@ -67,7 +68,8 @@ plist_struct! {
         #[serde(default)]
         pub using_screen: bool, // default false
 
-        pub audio_format: u64,
+        #[serde(with = "downcast_enum_to_legacy_u64")]
+        pub audio_format: AudioFormat,
     }
 }
 
@@ -76,7 +78,7 @@ impl StreamDescriptionAudioLegacy {
         StreamDescriptionAudio {
             stream_connection_id: self.stream_connection_id,
             stream_type: self.stream_type,
-            audio_format: AudioFormat::from_bits_retain(self.audio_format),
+            audio_format: self.audio_format,
             // Enforce a minimum of 250ms latency when streaming from AirPlay or AirPlay mirroring; 32ms minimum is not stable.
             audio_latency_ms: (self.latency_min.saturating_mul(1000) / u64::from(self.sr.max(1))).max(250),
             audio_loopback: None,
