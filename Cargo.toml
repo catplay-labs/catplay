@@ -66,3 +66,6 @@ codegen-units = 1
 
 [profile.release.package.catplay_hap]
 opt-level = 3
+
+[profile.release.package.fdk-aac-sys]
+opt-level = 3
