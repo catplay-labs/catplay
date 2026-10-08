@@ -1,0 +1,11 @@
+[package]
+name = "catplay-plist-noalloc-check"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Isolate the link check from the main crate's std-based dev dependencies.
+[workspace]
+
+[dependencies]
+catplay_plist = { path = "../..", default-features = false }

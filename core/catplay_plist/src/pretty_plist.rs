@@ -1,19 +1,20 @@
-use std::fmt;
+use crate::Value;
+use core::fmt;
 
 pub const PLIST_PRETTY_DATA_LIMIT: usize = 256;
 
 pub struct PrettyPlistValue<'a> {
-    value: &'a plist::Value,
+    value: &'a Value,
     data_limit: usize,
 }
 
 #[inline]
-pub fn pretty_plist_value(value: &plist::Value) -> PrettyPlistValue<'_> {
+pub fn pretty_plist_value(value: &Value) -> PrettyPlistValue<'_> {
     pretty_plist_value_with_limit(value, PLIST_PRETTY_DATA_LIMIT)
 }
 
 #[inline]
-pub fn pretty_plist_value_with_limit(value: &plist::Value, data_limit: usize) -> PrettyPlistValue<'_> {
+pub fn pretty_plist_value_with_limit(value: &Value, data_limit: usize) -> PrettyPlistValue<'_> {
     PrettyPlistValue { value, data_limit }
 }
 
@@ -46,9 +47,9 @@ fn fmt_data(bytes: &[u8], data_limit: usize, f: &mut fmt::Formatter<'_>) -> fmt:
     f.write_str(")")
 }
 
-fn fmt_plist_value(value: &plist::Value, depth: usize, data_limit: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+fn fmt_plist_value(value: &Value, depth: usize, data_limit: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match value {
-        plist::Value::Array(items) => {
+        Value::Array(items) => {
             if items.is_empty() {
                 return f.write_str("[]");
             }
@@ -65,7 +66,7 @@ fn fmt_plist_value(value: &plist::Value, depth: usize, data_limit: usize, f: &mu
             write_indent(f, depth)?;
             f.write_str("]")
         }
-        plist::Value::Dictionary(map) => {
+        Value::Dictionary(map) => {
             if map.is_empty() {
                 return f.write_str("{}");
             }
@@ -83,14 +84,13 @@ fn fmt_plist_value(value: &plist::Value, depth: usize, data_limit: usize, f: &mu
             write_indent(f, depth)?;
             f.write_str("}")
         }
-        plist::Value::Boolean(v) => write!(f, "{v}"),
-        plist::Value::Data(v) => fmt_data(v, data_limit, f),
-        plist::Value::Date(v) => write!(f, "{v:?}"),
-        plist::Value::Real(v) => write!(f, "{v}"),
-        plist::Value::Integer(v) => write!(f, "{v:?}"),
-        plist::Value::String(v) => write!(f, "{v:?}"),
-        plist::Value::Uid(v) => write!(f, "Uid({v:?})"),
-        _ => write!(f, "{value:?}"),
+        Value::Boolean(v) => write!(f, "{v}"),
+        Value::Data(v) => fmt_data(v, data_limit, f),
+        Value::Date(v) => write!(f, "{v:?}"),
+        Value::Real(v) => write!(f, "{v}"),
+        Value::Integer(v) => write!(f, "{v:?}"),
+        Value::String(v) => write!(f, "{v:?}"),
+        Value::Uid(v) => write!(f, "Uid({v:?})"),
     }
 }
 

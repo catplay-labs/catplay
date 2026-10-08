@@ -1,0 +1,10 @@
+Binary plist fixtures copied from independent upstream test suites.
+Swift Foundation fixtures: Apache-2.0
+rust-plist fixtures: MIT
+
+foundation_mixed.plist | https://raw.githubusercontent.com/swiftlang/swift-foundation/b898bbce74a46ce590791e0a4e3ff181a8b8af25/Tests/FoundationEssentialsTests/Resources/Generic_XML_Properties_Binary.plist | sha256 f99d6ed068feb09d75cac280a227321e8b8ecbc6d88bf7367a05c30017f1623e
+corefoundation_keyed_archive.plist | https://raw.githubusercontent.com/swiftlang/swift-corelibs-foundation/bd50c2ea233ecc9de1b404d81a8d2186a3b0b332/Tests/Foundation/Resources/NSKeyedUnarchiver-ComplexTest.plist | sha256 d4cf65e2ebfa3181ce2b45e0ece3469d7ec3c02743ed5afe0469bfaeecc93201
+upstream_mixed.plist | https://raw.githubusercontent.com/ebarnard/rust-plist/10ba3e3b44adb6246f3f5cc8e66134e03498f634/tests/data/binary.plist | sha256 525f6fac6f4630dfa95d64c969486abceda01a7ed5fe1a16b4059e26943fce2a
+upstream_utf16.plist | https://raw.githubusercontent.com/ebarnard/rust-plist/10ba3e3b44adb6246f3f5cc8e66134e03498f634/tests/data/utf16_bplist.plist | sha256 c0b7d33001021df98d8631c604c8471e74e4b4599bac51a8bed149ca82adbcd5
+upstream_three_byte_offsets.plist | https://raw.githubusercontent.com/ebarnard/rust-plist/10ba3e3b44adb6246f3f5cc8e66134e03498f634/tests/data/binary_three_byte_integer_offset_table.plist | sha256 b70ee0e3e2835fa85c1900017ff21975c582ca13765fcd9f730f3828a30e50e0
+upstream_circular_array.plist | https://raw.githubusercontent.com/ebarnard/rust-plist/10ba3e3b44adb6246f3f5cc8e66134e03498f634/tests/data/binary_circular_array.plist | sha256 825aed6ce83a8abdbe15d4686ce35157f4eb861bd792f0ce790115fb4ec48805

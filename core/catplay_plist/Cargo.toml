@@ -3,17 +3,25 @@ name = "catplay_plist"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-plist = { version = "1.7.4", features = [
-    "enable_unstable_features_that_may_break_with_minor_version_bumps",
-] }
-serde = { version = "1.0.219", features = ["derive"] }
-serde_repr = "0.1.20"
-serde_with = "3.14.0"
-bitflags = { version = "2.9.1" }
-log = "0.4.29"
-bytes = "1.10.1"
-thiserror = "2.0.18"
+[features]
+default = ["serde"]
+alloc = ["dep:bytes", "dep:time", "dep:indexmap", "dep:hashbrown", "base64/alloc"]
+serde = ["alloc", "dep:serde", "dep:serde_repr", "dep:serde_with", "dep:bitflags", "dep:log", "dep:thiserror"]
 
-catplay_util = { path = "../catplay_util" }
-catplay_tracing = { path = "../catplay_tracing" }
+[dependencies]
+serde = { version = "1.0.219", optional = true, default-features = false, features = ["alloc", "derive"] }
+serde_repr = { version = "0.1.20", optional = true }
+serde_with = { version = "3.14.0", optional = true, default-features = false, features = ["alloc", "macros"] }
+bitflags = { optional = true, version = "2.9.1" }
+log = { version = "0.4.29", optional = true }
+bytes = { optional = true, version = "1.10.1", default-features = false }
+thiserror = { optional = true, version = "2.0.18", default-features = false }
+time = { optional = true, version = "0.3.55", default-features = false, features = ["alloc", "parsing"] }
+indexmap = { optional = true, version = "2.14.0", default-features = false }
+hashbrown = { optional = true, version = "0.17", default-features = false, features = ["default-hasher"] }
+base64 = { version = "0.23.1", default-features = false }
+itoa = "1.0"
+ryu = "1.0"
+
+[dev-dependencies]
+insta = "1.44.3"

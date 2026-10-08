@@ -1,4 +1,5 @@
-use std::ops::Deref;
+use alloc::string::String;
+use core::ops::Deref;
 
 /// Some CarPlay HUs send improper booleans that violate the spec, for example: `"oemIconVisible": String("1")`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
