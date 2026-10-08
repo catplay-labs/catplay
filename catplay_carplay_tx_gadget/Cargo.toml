@@ -13,6 +13,7 @@ catplay_hap = { path = "../core/catplay_hap" }
 catplay_bonjour = { path = "../core/catplay_bonjour" }
 catplay_carplay = { path = "../carplay/catplay_carplay" }
 catplay_csm = { path = "../core/catplay_csm" }
+catplay_lingo = { path = "../core/catplay_lingo" }
 
 async-trait = "0.1.89"
 tokio = { version = "1.48.0", features = ["rt", "signal"] }
