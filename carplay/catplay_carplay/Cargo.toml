@@ -60,4 +60,16 @@ serde_json = "1.0"
 tx = []
 bonjour = []
 tracing = []
-default = ["tx", "bonjour", "tracing"]
+
+# Skip screen RX frame authentication when supported by the cipher backend.
+# Disabled by default; improves latency but is technically a security downgrade.
+screen_skip_poly_best_effort = []
+# Prefetch AES keystream between screen frames to decrease decode latency.
+screen_prefetch_aes = []
+# Prefetch ChaCha keystream between screen frames to decrease decode latency.
+screen_prefetch_chacha = []
+# Don't apply any time budgets to screen ChaCha prefetch between incoming frames.
+# This should offer almost 100% cache hit rate at the cost of zero thermal efficiency
+# and additional latency for high-priority threads.
+screen_prefetch_chacha_burning = []
+default = ["tx", "bonjour", "tracing", "screen_prefetch_aes", "screen_prefetch_chacha"]

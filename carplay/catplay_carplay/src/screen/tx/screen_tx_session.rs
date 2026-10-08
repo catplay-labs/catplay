@@ -13,7 +13,9 @@ use crate::{
     cipher::AirPlayStreamEncryption,
     clock::MediaClockBox,
     rtsp_frame::{RtspError, RtspResult},
-    screen::{ScreenFrame, ScreenFrameCodec, ScreenOpCode, ScreenSenderStats, tx::screen_tx_proxy::ScreenTransmitProxy},
+    screen::{
+        ScreenFrame, ScreenFrameCodec, ScreenFrameCodecFlags, ScreenOpCode, ScreenSenderStats, tx::screen_tx_proxy::ScreenTransmitProxy,
+    },
     video::{AvccConfigExtended, EncodedVideoFrame},
 };
 
@@ -148,8 +150,12 @@ impl TcpSession for ScreenTransmitSession {
     type Error = RtspError;
 
     fn init_codec(&mut self) -> RtspResult<ScreenFrameCodec> {
-        let codec = ScreenFrameCodec::new(self.cipher, self.stream_connection_id, false);
-        Ok(codec)
+        Ok(ScreenFrameCodec::new_with_flags(
+            self.cipher,
+            self.stream_connection_id,
+            false,
+            ScreenFrameCodecFlags::crate_defaults(),
+        ))
     }
 
     async fn reconcile(&mut self, sink: &mut dyn TcpSink<Self>) -> RtspResult<()> {

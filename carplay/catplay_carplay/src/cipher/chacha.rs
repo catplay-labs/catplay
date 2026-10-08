@@ -36,10 +36,19 @@ fn compute_keys(shared_secret: &[u8; 32], t: AirPlayCipherSaltType) -> ([u8; 32]
 }
 
 pub fn create_chacha_ciphers(shared_secret: &[u8; 32], t: AirPlayCipherSaltType, server: bool) -> (HomeKitCipher, HomeKitCipher) {
+    create_chacha_ciphers_with(shared_secret, t, server, HomeKitCipher::new)
+}
+
+pub(crate) fn create_chacha_ciphers_with<C>(
+    shared_secret: &[u8; 32],
+    t: AirPlayCipherSaltType,
+    server: bool,
+    mut new: impl FnMut([u8; 32]) -> C,
+) -> (C, C) {
     let (read_key, write_key) = compute_keys(shared_secret, t);
 
-    let read_cipher = HomeKitCipher::new(read_key);
-    let write_cipher = HomeKitCipher::new(write_key);
+    let read_cipher = new(read_key);
+    let write_cipher = new(write_key);
 
     match server {
         false => (read_cipher, write_cipher),
