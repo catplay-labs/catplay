@@ -63,3 +63,6 @@ codegen-units = 1
 #]
 #strip = true
 #debug = false
+
+[profile.release.package.catplay_hap]
+opt-level = 3
