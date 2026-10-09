@@ -108,7 +108,7 @@ impl ScratchBuffers {
             dst.extend_from_slice(chunk);
             Ok::<(), Infallible>(())
         }) {
-            Ok(()) if dst.len() - start == encoded_size => Ok(()),
+            Ok(()) if dst.len() - start == encoded_size => make_root_first(&mut dst[start..]),
             Ok(()) => {
                 dst.truncate(start);
                 Err(PlistError::UnexpectedState)
@@ -130,7 +130,7 @@ impl ScratchBuffers {
                 dst.extend_from_slice(chunk);
                 Ok::<(), Infallible>(())
             }) {
-                Ok(()) => return Ok(()),
+                Ok(()) => return make_root_first(&mut dst[start..]),
                 Err(serde::encode::Error::Core(encode::Error::ScratchTooSmall { kind, needed, .. })) => {
                     dst.truncate(start);
                     self.grow(kind, needed)
@@ -149,16 +149,81 @@ impl ScratchBuffers {
     where
         W::Error: core::error::Error + Send + Sync + 'static,
     {
-        self.measure(value)?;
-        let scratch = self.as_scratch();
-        serde::encode::encode(value, scratch, |chunk| dst.emit(chunk)).map_err(|err| PlistError::Encode(err.to_string()))
+        let mut encoded = BytesMut::new();
+        self.encode_into(value, &mut encoded)?;
+        dst.emit(&encoded)
+            .map_err(|err| PlistError::Encode(err.to_string()))
     }
+}
+
+/// CarPlay 210 reads the root directly at byte 8 instead of consulting the
+/// trailer's top-object index. Move its complete body there and repair offsets.
+#[cfg(feature = "serde")]
+fn make_root_first(data: &mut [u8]) -> PlistResult<()> {
+    if data.len() < 41 || &data[..8] != b"bplist00" {
+        return Err(PlistError::UnexpectedState);
+    }
+    let trailer = data.len() - 32;
+    let width = data[trailer + 6] as usize;
+    if !matches!(width, 1 | 2 | 4 | 8) {
+        return Err(PlistError::UnexpectedState);
+    }
+    let read_u64 = |bytes: &[u8]| -> u64 { bytes.iter().fold(0, |n, &byte| (n << 8) | u64::from(byte)) };
+    let count = usize::try_from(read_u64(&data[trailer + 8..trailer + 16])).map_err(|_| PlistError::UnexpectedState)?;
+    let root = usize::try_from(read_u64(&data[trailer + 16..trailer + 24])).map_err(|_| PlistError::UnexpectedState)?;
+    let table = usize::try_from(read_u64(&data[trailer + 24..trailer + 32])).map_err(|_| PlistError::UnexpectedState)?;
+    if root >= count
+        || table < 9
+        || count
+            .checked_mul(width)
+            .and_then(|n| table.checked_add(n))
+            .is_none_or(|end| end > trailer)
+    {
+        return Err(PlistError::UnexpectedState);
+    }
+    let entry = |i: usize| table + i * width;
+    let root_start = usize::try_from(read_u64(&data[entry(root)..entry(root) + width])).map_err(|_| PlistError::UnexpectedState)?;
+    if !(8..table).contains(&root_start) {
+        return Err(PlistError::UnexpectedState);
+    }
+    if root_start == 8 {
+        return Ok(());
+    }
+    let mut root_end = table;
+    for i in 0..count {
+        let offset = usize::try_from(read_u64(&data[entry(i)..entry(i) + width])).map_err(|_| PlistError::UnexpectedState)?;
+        if !(8..table).contains(&offset) {
+            return Err(PlistError::UnexpectedState);
+        }
+        if offset > root_start {
+            root_end = root_end.min(offset);
+        }
+    }
+    let root_len = root_end - root_start;
+    data[8..root_end].rotate_right(root_len);
+    for i in 0..count {
+        let at = entry(i);
+        let offset = usize::try_from(read_u64(&data[at..at + width])).map_err(|_| PlistError::UnexpectedState)?;
+        let adjusted = if i == root {
+            8
+        } else if offset < root_start {
+            offset
+                .checked_add(root_len)
+                .ok_or(PlistError::UnexpectedState)?
+        } else {
+            offset
+        };
+        let bytes = (adjusted as u64).to_be_bytes();
+        data[at..at + width].copy_from_slice(&bytes[8 - width..]);
+    }
+    Ok(())
 }
 
 #[cfg(all(test, feature = "serde"))]
 mod tests {
     use super::*;
     use ::serde::Serialize;
+    use alloc::collections::BTreeMap;
 
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -168,6 +233,38 @@ mod tests {
         nested: Vec<Vec<u64>>,
         optional: Option<u64>,
         omitted: Option<u64>,
+    }
+
+    #[test]
+    fn carplay_210_dictionary_root_starts_at_byte_eight() {
+        // More than 255 objects also exercises a multi-byte offset table.
+        let values: BTreeMap<String, u64> = (0..150)
+            .map(|i| (alloc::format!("field{i:03}"), i))
+            .collect();
+        let mut scratch = ScratchBuffers::default();
+        let mut encoded = BytesMut::from(&b"prefix"[..]);
+        scratch.encode_into(&values, &mut encoded).unwrap();
+        let data = &encoded[6..];
+        assert_eq!(data[8] & 0xf0, 0xd0, "CarPlay 210 reads the root at byte 8");
+
+        let trailer = data.len() - 32;
+        let width = data[trailer + 6] as usize;
+        assert!(width > 1);
+        let root = u64::from_be_bytes(data[trailer + 16..trailer + 24].try_into().unwrap()) as usize;
+        let table = u64::from_be_bytes(data[trailer + 24..trailer + 32].try_into().unwrap()) as usize;
+        let root_offset = data[table + root * width..table + (root + 1) * width]
+            .iter()
+            .fold(0usize, |n, byte| (n << 8) | *byte as usize);
+        assert_eq!(root_offset, 8);
+        assert_eq!(crate::from_bytes::<BTreeMap<String, u64>>(data).unwrap(), values);
+
+        let mut streamed = Vec::new();
+        crate::to_writer_binary(&mut streamed, &values).unwrap();
+        assert_eq!(streamed, data);
+
+        let mut caching = crate::CachingSerializer::default();
+        let cached = caching.serialize(&values).unwrap();
+        assert_eq!(&cached[..], data);
     }
 
     fn check<T: Serialize>(value: &T) {
