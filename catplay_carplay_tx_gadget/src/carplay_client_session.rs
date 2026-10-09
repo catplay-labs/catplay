@@ -298,9 +298,6 @@ impl CarPlayClientSession {
                     .into(),
                     &handle,
                 )?;
-                if let Some(id) = transaction_id {
-                    handle.finish_lingo_transaction(id);
-                }
                 Self::send_legacy(
                     &handle,
                     Outgoing::new(
@@ -310,7 +307,10 @@ impl CarPlayClientSession {
                             )),
                             authentication_retry_counter: Some(1),
                         }),
-                        TransactionIntent::New { start_transaction: true },
+                        transaction_id.map_or(TransactionIntent::None, |id| TransactionIntent::Existing {
+                            id,
+                            start_transaction: false,
+                        }),
                     ),
                 )?;
                 Self::send_legacy(
@@ -343,7 +343,7 @@ impl CarPlayClientSession {
                     &handle,
                 )?;
             }
-            if pending_command == Some(general::GetAccessoryAuthenticationSignature::KEY) {
+            if pending_command == Some(general::GetAccessoryAuthenticationInfo::KEY) {
                 if let Some(id) = transaction_id {
                     handle.finish_lingo_transaction(id);
                 }
@@ -1070,6 +1070,7 @@ mod legacy_tests {
             let ids = handle.sent_ids.lock().unwrap();
             (ids[4].unwrap(), ids[5].unwrap())
         };
+        assert_eq!(signature_id, certificate_id);
         futures::executor::block_on(
             session.on_legacy_message(
                 general::LingoMessage::RetAccessoryAuthenticationSignature(general::RetAccessoryAuthenticationSignature {
@@ -1077,7 +1078,7 @@ mod legacy_tests {
                 })
                 .into(),
                 Some(signature_id),
-                Some(general::GetAccessoryAuthenticationSignature::KEY),
+                Some(general::GetAccessoryAuthenticationInfo::KEY),
                 handle.clone(),
             ),
         )
