@@ -469,9 +469,14 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
                     let task = spawn(async move {
                         const INVITE_DEADLINE: Duration = Duration::from_millis(60000);
                         const INVITE_RETRY: Duration = Duration::from_millis(100);
+                        // After the first minute, keep paging at a lower duty cycle so a phone that
+                        // arrives late (or turns Bluetooth on late) still gets reconnected. The task is
+                        // dropped, and the paging stops, once a session is received.
+                        const INVITE_RETRY_SLOW: Duration = Duration::from_millis(10000);
 
                         let invite_deadline = Instant::now() + INVITE_DEADLINE;
                         let mut last_err = None;
+                        let mut slow = false;
 
                         loop {
                             match BluetoothManager::invite_iphone(&hci, &peer_mac).await {
@@ -486,14 +491,19 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
 
                             let remaining = invite_deadline.saturating_duration_since(Instant::now());
                             if remaining.is_zero() {
-                                break;
+                                if !slow {
+                                    slow = true;
+                                    if let Some(err) = last_err.as_ref() {
+                                        warn!(
+                                            "Failed to reconnect to iPhone peer {peer_mac} before invite deadline: {err:?}; retrying every {INVITE_RETRY_SLOW:?}"
+                                        );
+                                    }
+                                }
+                                sleep(INVITE_RETRY_SLOW).await;
+                                continue;
                             }
 
                             sleep(remaining.min(INVITE_RETRY)).await;
-                        }
-
-                        if let Some(err) = last_err {
-                            warn!("Failed to reconnect to iPhone peer {peer_mac} before invite deadline: {err:?}");
                         }
                     });
                     self.last_bt_peer_task.replace(task);
@@ -529,6 +539,22 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
                 }
 
                 server.stop_inviting();
+
+                // The session just ended (e.g. the phone's Wi-Fi went away). The phone dropped its Bluetooth
+                // link when the session started, so nothing brings it back unless we page it again.
+                if _status == &LocalState::Receiving
+                    && self.find_active_session().is_none()
+                    && let Some(mac) = self.last_mac
+                    && let Some(peer_mac) = self.get_bt_last_connect().or(self.last_bt_peer)
+                {
+                    info!("Session ended, reconnecting to iPhone peer {peer_mac}");
+                    return LocalState::StartingLastConnect {
+                        hci: self.hci.clone(),
+                        mac,
+                        peer_mac,
+                    }
+                    .into();
+                }
 
                 match self.find_active_session() {
                     None if self.invites_blocked => LocalState::Passive.into(),
