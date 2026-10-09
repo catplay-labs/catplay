@@ -349,6 +349,21 @@ impl CarPlayClientSession {
                 }
             }
         } else if message
+            .cast::<display::SetCurrentEQProfileIndex>()
+            .is_some()
+        {
+            reply(
+                display::LingoMessage::IPodAck(display::IPodAck {
+                    command_result: display::IPodAckCommandResult::OK,
+                    acked_command_id: display::SetCurrentEQProfileIndex::META.command as u8,
+                    maximum_pending_wait: None,
+                    session_id: None,
+                    num_bytes_dropped: None,
+                })
+                .into(),
+                &handle,
+            )?;
+        } else if message
             .cast::<audio::RetAccessorySampleRateCaps>()
             .is_some()
         {
