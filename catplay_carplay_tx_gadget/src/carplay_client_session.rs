@@ -16,9 +16,6 @@ use log::{debug, warn};
 
 #[derive(Default)]
 pub struct CarPlayClientSession {
-    power_sub: bool,
-    power_draw: Option<u16>,
-    flushed_power: bool,
     start: Option<Instant>,
     artwork_tx: Option<u8>,
 }
@@ -801,52 +798,41 @@ impl CsmSession for CarPlayClientSession {
             self.send_now_playing(_handle.clone())?;
         }
 
-        if let Some(_spu) = packet.cast::<StartPowerUpdates>() {
-            debug!("Got StartPowerUpdates {_spu:?}");
-            self.power_sub = true;
-            if self.power_draw.is_none() {
-                self.power_draw.replace(500);
-            }
-
-            if self.power_draw.is_some() {
-                self.send(
-                    &PowerUpdate {
-                        is_external_charger_connected: Some(true),
-                        ..PowerUpdate::default()
-                    },
-                    &_handle,
-                )?;
-                self.send(
-                    &PowerUpdate {
-                        battery_charging_state: Some(BatteryChargingState::Charging),
-                        ..PowerUpdate::default()
-                    },
-                    &_handle,
-                )?;
-                self.flushed_power = true;
-            }
+        if packet.cast::<PowerSourceUpdate>().is_some() {
+            self.send(
+                &PowerUpdate {
+                    maximum_current_drawn_from_accessory: Some(1000),
+                    ..PowerUpdate::default()
+                },
+                &_handle,
+            )?;
         }
 
-        if let Some(_pu) = packet.cast::<PowerSourceUpdate>() {
-            self.power_draw
-                .replace(_pu.available_current_for_device.unwrap_or(500)); // TODO proper fallback to prev power_draw
-
-            if self.power_sub && !self.flushed_power {
-                self.flushed_power = true;
-                self.send(
-                    &PowerUpdate {
-                        is_external_charger_connected: Some(true),
-                        ..PowerUpdate::default()
-                    },
-                    &_handle,
-                )?;
-                self.send(
-                    &PowerUpdate {
-                        battery_charging_state: Some(BatteryChargingState::Charging),
-                        ..PowerUpdate::default()
-                    },
-                    &_handle,
-                )?;
+        if packet.cast::<StartPowerUpdates>().is_some() {
+            // Match the vendor firmware: one parameter per packet, in this order.
+            for update in [
+                PowerUpdate {
+                    maximum_current_drawn_from_accessory: Some(1000),
+                    ..PowerUpdate::default()
+                },
+                PowerUpdate {
+                    device_battery_will_charge_if_power_is_present: Some(true),
+                    ..PowerUpdate::default()
+                },
+                PowerUpdate {
+                    is_external_charger_connected: Some(true),
+                    ..PowerUpdate::default()
+                },
+                PowerUpdate {
+                    battery_charging_state: Some(BatteryChargingState::Charging),
+                    ..PowerUpdate::default()
+                },
+                PowerUpdate {
+                    battery_charge_level: Some(98),
+                    ..PowerUpdate::default()
+                },
+            ] {
+                self.send(&update, &_handle)?;
             }
         }
 
