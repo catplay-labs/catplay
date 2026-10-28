@@ -770,14 +770,15 @@ impl CsmSession for CarPlayClientSession {
             }
 
             if self.id.wants_rx(DeviceTimeUpdate::PACKET_ID) {
-                self.send(
-                    &DeviceTimeUpdate {
-                        seconds_since_reference_date: 1_445_470_140,
-                        time_zone_offset_minutes: 0,
-                        daylight_savings_offset_minutes: 0,
-                    },
-                    &_handle,
-                )?;
+                // Wooboobox doesn't send fake DeviceTimeUpdates even if car wants one
+                // self.send(
+                //     &DeviceTimeUpdate {
+                //         seconds_since_reference_date: 1_445_470_140,
+                //         time_zone_offset_minutes: 0,
+                //         daylight_savings_offset_minutes: 0,
+                //     },
+                //     &_handle,
+                // )?;
             }
             self.send(
                 &StartLocationInformation {
