@@ -811,16 +811,14 @@ impl CsmSession for CarPlayClientSession {
             if self.power_draw.is_some() {
                 self.send(
                     &PowerUpdate {
-                        maximum_current_drawn_from_accessory: Some(1000),
-                        device_battery_will_charge_if_power_is_present: None,
+                        is_external_charger_connected: Some(true),
                         ..PowerUpdate::default()
                     },
                     &_handle,
                 )?;
                 self.send(
                     &PowerUpdate {
-                        maximum_current_drawn_from_accessory: None,
-                        device_battery_will_charge_if_power_is_present: Some(true),
+                        battery_charging_state: Some(BatteryChargingState::Charging),
                         ..PowerUpdate::default()
                     },
                     &_handle,
@@ -837,16 +835,14 @@ impl CsmSession for CarPlayClientSession {
                 self.flushed_power = true;
                 self.send(
                     &PowerUpdate {
-                        maximum_current_drawn_from_accessory: Some(1000),
-                        device_battery_will_charge_if_power_is_present: None,
+                        is_external_charger_connected: Some(true),
                         ..PowerUpdate::default()
                     },
                     &_handle,
                 )?;
                 self.send(
                     &PowerUpdate {
-                        maximum_current_drawn_from_accessory: None,
-                        device_battery_will_charge_if_power_is_present: Some(true),
+                        battery_charging_state: Some(BatteryChargingState::Charging),
                         ..PowerUpdate::default()
                     },
                     &_handle,
