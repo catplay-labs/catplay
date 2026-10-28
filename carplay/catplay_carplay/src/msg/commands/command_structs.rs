@@ -35,7 +35,10 @@ plist_struct! {
 }
 
 plist_struct! {
-    pub struct CommandForceKeyFrame {}
+    pub struct CommandForceKeyFrame {
+        /// UUID of the display that needs a keyframe. If omitted, the main display is implied.
+        pub uuid: Option<String>
+    }
 }
 
 plist_struct! {
@@ -106,6 +109,15 @@ plist_struct! {
         /// True if certain UI elements should be limited.
         #[serde(rename = "limitedUI")]
         pub limited_ui: bool,
+    }
+}
+
+plist_struct! {
+    pub struct CommandChangeMapZoomLevel {
+        /// Direction to zoom the map in (observed value 1 when zooming via the instrument cluster).
+        pub zoom_direction: i64,
+        /// UUID of the display showing the map.
+        pub uuid: String
     }
 }
 

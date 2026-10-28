@@ -128,6 +128,47 @@ plist_struct! {
         pub uuid: String,
         /// Absent in v210.81
         pub primary_input_device: Option<PrimaryInputDevice>,
+
+        // Modern CarPlay (secondary displays such as an instrument cluster)
+        pub uid: Option<String>,
+        /// For example "Instrument Cluster".
+        pub properties: Option<Vec<String>>,
+        /// Stream type used to drive this display (`AltScreen` for secondary displays).
+        #[serde(rename = "type")]
+        pub stream_type: Option<StreamType>,
+        #[serde(rename = "initialURL")]
+        pub initial_url: Option<String>,
+        pub zoom_factor: Option<f64>,
+        /// Index into `view_areas` of the view area that is active when the session starts.
+        pub initial_view_area: Option<u64>,
+        pub view_areas: Option<Vec<ViewArea>>,
+        /// Set when the display has more than one view area to switch between.
+        pub view_area_transition_control: Option<FlexBool>,
+        pub corner_masks: Option<FlexBool>,
+    }
+}
+
+// Rectangle within a view area in which CarPlay places important UI elements.
+plist_struct! {
+    pub struct SafeArea {
+        pub origin_x_pixels: i32,
+        pub origin_y_pixels: i32,
+        pub width_pixels: i32,
+        pub height_pixels: i32,
+    }
+}
+
+// Rectangle of the video stream in which CarPlay draws its UI. The pixel values are signed, because negative values
+// have been observed in the safe area of some setups.
+plist_struct! {
+    pub struct ViewArea {
+        pub origin_x_pixels: i32,
+        pub origin_y_pixels: i32,
+        pub width_pixels: i32,
+        pub height_pixels: i32,
+        pub safe_area: Option<SafeArea>,
+        /// Edge on which CarPlay places the dock (for example, 1 is bottom and 2 is driver side).
+        pub view_area_status_bar_edge: Option<u64>,
     }
 }
 
@@ -178,6 +219,135 @@ mod audio_format_tests {
         assert_eq!(decoded.audio_input_formats.unwrap().bits(), 84);
         assert_eq!(decoded.audio_output_formats.unwrap().bits(), 34_900);
         assert_eq!(decoded.stream_type, StreamType::MainAudio);
+    }
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::*;
+    use catplay_plist::{Dictionary, Value, from_bytes, to_writer_binary};
+
+    #[test]
+    fn alt_display_round_trips_without_losing_keys() {
+        // Values observed for the instrument cluster in the /info response of a VW MMX head unit.
+        let safe_area = Value::Dictionary(Dictionary::from_iter([
+            ("widthPixels", Value::from(320u64)),
+            ("originXPixels", Value::from(240u64)),
+            ("originYPixels", Value::from(60u64)),
+            ("heightPixels", Value::from(340u64)),
+        ]));
+        let view_areas = Value::Array(vec![Value::Dictionary(Dictionary::from_iter([
+            ("widthPixels", Value::from(800u64)),
+            ("originXPixels", Value::from(0u64)),
+            ("originYPixels", Value::from(0u64)),
+            ("heightPixels", Value::from(480u64)),
+            ("safeArea", safe_area),
+        ]))]);
+        let display_entry = Value::Dictionary(Dictionary::from_iter([
+            ("widthPixels", Value::from(800u64)),
+            ("heightPixels", Value::from(480u64)),
+            ("widthPhysical", Value::from(240u64)),
+            ("heightPhysical", Value::from(144u64)),
+            ("features", Value::from(10u64)),
+            ("maxFPS", Value::from(40u64)),
+            ("primaryInputDevice", Value::from(3u64)),
+            ("properties", Value::Array(vec!["Instrument Cluster".into()])),
+            ("zoomFactor", Value::from(1.5)),
+            ("initialViewArea", Value::from(0u64)),
+            ("uid", "b7e6c5a0-2222-4000-8000-000000000002".into()),
+            ("uuid", "b7e6c5a0-2222-4000-8000-000000000002".into()),
+            ("initialURL", "maps:/car/instrumentcluster".into()),
+            ("type", Value::from(111u64)),
+            ("viewAreas", view_areas),
+        ]));
+
+        let mut binary = Vec::new();
+        to_writer_binary(&mut binary, &display_entry).unwrap();
+        let display: Display = from_bytes(&binary).unwrap();
+        assert_eq!(display.stream_type, Some(StreamType::AltScreen));
+        assert_eq!(display.primary_input_device, Some(PrimaryInputDevice::Knob));
+        assert_eq!(display.properties, Some(vec!["Instrument Cluster".to_owned()]));
+
+        // The display is proxied to the iPhone, so it must serialize to exactly what the car has sent.
+        binary.clear();
+        to_writer_binary(&mut binary, &display).unwrap();
+        assert_eq!(from_bytes::<Value>(&binary).unwrap(), display_entry);
+    }
+
+    #[test]
+    fn main_display_with_view_areas_round_trips_without_losing_keys() {
+        // Keys that are reported for head units with a split screen, including a negative safe area width.
+        let safe_area = Value::Dictionary(Dictionary::from_iter([
+            ("widthPixels", Value::from(-10i64)),
+            ("originXPixels", Value::from(0u64)),
+            ("originYPixels", Value::from(0u64)),
+            ("heightPixels", Value::from(720u64)),
+        ]));
+        let view_areas = Value::Array(vec![
+            Value::Dictionary(Dictionary::from_iter([
+                ("widthPixels", Value::from(1920u64)),
+                ("originXPixels", Value::from(0u64)),
+                ("originYPixels", Value::from(0u64)),
+                ("heightPixels", Value::from(720u64)),
+                ("viewAreaStatusBarEdge", Value::from(1u64)),
+            ])),
+            Value::Dictionary(Dictionary::from_iter([
+                ("widthPixels", Value::from(1280u64)),
+                ("originXPixels", Value::from(0u64)),
+                ("originYPixels", Value::from(0u64)),
+                ("heightPixels", Value::from(720u64)),
+                ("safeArea", safe_area),
+                ("viewAreaStatusBarEdge", Value::from(2u64)),
+            ])),
+        ]);
+        let display_entry = Value::Dictionary(Dictionary::from_iter([
+            ("widthPixels", Value::from(1920u64)),
+            ("heightPixels", Value::from(720u64)),
+            ("widthPhysical", Value::from(292u64)),
+            ("heightPhysical", Value::from(110u64)),
+            ("features", Value::from(2u64)),
+            ("uuid", "e5f7a68d-7b0f-4305-984b-974f677a150b".into()),
+            ("initialViewArea", Value::from(1u64)),
+            ("viewAreas", view_areas),
+            ("viewAreaTransitionControl", Value::Boolean(true)),
+            ("cornerMasks", Value::Boolean(true)),
+        ]));
+
+        let mut binary = Vec::new();
+        to_writer_binary(&mut binary, &display_entry).unwrap();
+        let display: Display = from_bytes(&binary).unwrap();
+        let view_areas = display.view_areas.as_ref().unwrap();
+        assert_eq!(view_areas.len(), 2);
+        assert_eq!(view_areas[0].safe_area, None);
+        assert_eq!(view_areas[1].safe_area.as_ref().unwrap().width_pixels, -10);
+        assert_eq!(view_areas[1].view_area_status_bar_edge, Some(2));
+
+        binary.clear();
+        to_writer_binary(&mut binary, &display).unwrap();
+        assert_eq!(from_bytes::<Value>(&binary).unwrap(), display_entry);
+    }
+
+    #[test]
+    fn main_display_does_not_gain_alt_display_keys() {
+        let mut binary = Vec::new();
+        to_writer_binary(&mut binary, &Display::default()).unwrap();
+        let Value::Dictionary(display_entry) = from_bytes::<Value>(&binary).unwrap() else {
+            panic!("expected a dictionary");
+        };
+
+        for key in [
+            "uid",
+            "properties",
+            "type",
+            "initialURL",
+            "zoomFactor",
+            "initialViewArea",
+            "viewAreas",
+            "viewAreaTransitionControl",
+            "cornerMasks",
+        ] {
+            assert!(display_entry.get(key).is_none(), "unexpected key {key}");
+        }
     }
 }
 

@@ -18,7 +18,7 @@ use crate::{
     clock::{MediaClockBox, MediaClockProxy},
     events::CommandPending,
     modes::AirPlayModeState,
-    msg::{AudioFormat, AudioType, Command, InfoMessageResponse, StreamType},
+    msg::{AudioFormat, AudioType, Command, ControllerFeature, InfoMessageResponse, StreamType},
     rtsp_frame::{RtspError, RtspFuture, RtspResult},
     screen::tx::ScreenTransmitProxy,
 };
@@ -36,6 +36,7 @@ pub struct AirPlayTransmitterProxy {
     raw_client: AirPlayRtspClient,
     media_clock: MediaClockProxy,
     info: InfoMessageResponse,
+    enabled_features: Vec<ControllerFeature>,
     closed: watch::Sender<Option<AirPlayTransmitterSessionError>>,
     task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
 }
@@ -48,6 +49,7 @@ impl AirPlayTransmitterProxy {
         let raw_client = streams.client.clone().unwrap();
         let media_clock = streams.media_clock.clone().unwrap();
         let info = streams.info.clone().unwrap();
+        let enabled_features = streams.enabled_features.clone();
 
         let (rx, tx) = mpsc::unbounded();
         let (cmd_queue_tx, cmd_queue_rx) = mpsc::unbounded();
@@ -61,6 +63,7 @@ impl AirPlayTransmitterProxy {
             raw_client,
             media_clock,
             info,
+            enabled_features,
             closed,
             task,
         })
@@ -113,6 +116,10 @@ impl AirPlayTransmitter for AirPlayTransmitterProxy {
         &self.info
     }
 
+    fn enabled_features(&self) -> &[ControllerFeature] {
+        &self.enabled_features
+    }
+
     async fn closed(&self) -> AirPlayTransmitterSessionError {
         let mut closed = self.closed.subscribe();
 
@@ -163,7 +170,22 @@ impl AirPlayTransmitter for AirPlayTransmitterProxy {
 
         let _ = self.schedule(move |t| {
             Box::pin(async move {
-                let _ = tx.send(t.do_setup_video(StreamType::Screen, latency).await);
+                let _ = tx.send(t.do_setup_video(StreamType::Screen, latency, None).await);
+            })
+        });
+
+        match rx.await {
+            Err(_) => Err(RtspError::Closed),
+            Ok(v) => v,
+        }
+    }
+
+    async fn setup_alt_screen(&self, latency: Duration, uuid: Option<String>) -> RtspResult<TeardownGuard<ScreenTransmitProxy>> {
+        let (tx, rx) = oneshot::channel();
+
+        let _ = self.schedule(move |t| {
+            Box::pin(async move {
+                let _ = tx.send(t.do_setup_video(StreamType::AltScreen, latency, uuid).await);
             })
         });
 

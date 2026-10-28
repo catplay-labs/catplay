@@ -7,9 +7,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::{
     modes::ChangeModes,
     msg::{
-        CommandDisableBluetooth, CommandDuckAudio, CommandForceKeyFrame, CommandHidSendReport, CommandHidSetInputMode,
-        CommandIApSendMessage, CommandModesChanged, CommandRequestSiri, CommandRequestUI, CommandSetLimitedUI, CommandSetNightMode,
-        CommandType, CommandUnduckAudio,
+        CommandChangeMapZoomLevel, CommandDisableBluetooth, CommandDuckAudio, CommandForceKeyFrame, CommandHidSendReport,
+        CommandHidSetInputMode, CommandIApSendMessage, CommandModesChanged, CommandRequestSiri, CommandRequestUI, CommandSetLimitedUI,
+        CommandSetNightMode, CommandType, CommandUnduckAudio,
     },
     rtsp_frame::RtspString,
 };
@@ -31,6 +31,7 @@ pub enum Command {
     RequestUI(CommandRequestUI),
     SetNightMode(CommandSetNightMode),
     SetLimitedUI(CommandSetLimitedUI),
+    ChangeMapZoomLevel(CommandChangeMapZoomLevel),
 
     IApSendMessage(CommandIApSendMessage),
 }
@@ -50,6 +51,7 @@ impl Command {
             Command::RequestUI(_) => CommandType::RequestUI,
             Command::SetNightMode(_) => CommandType::SetNightMode,
             Command::SetLimitedUI(_) => CommandType::SetLimitedUI,
+            Command::ChangeMapZoomLevel(_) => CommandType::ChangeMapZoomLevel,
             Command::IApSendMessage(_) => CommandType::IApSendMessage,
         }
     }
@@ -120,6 +122,7 @@ impl Serialize for Command {
             Command::RequestUI(data) => map.serialize_entry("params", data)?,
             Command::SetNightMode(data) => map.serialize_entry("params", data)?,
             Command::SetLimitedUI(data) => map.serialize_entry("params", data)?,
+            Command::ChangeMapZoomLevel(data) => map.serialize_entry("params", data)?,
             Command::IApSendMessage(data) => map.serialize_entry("params", data)?,
         }
 
@@ -158,6 +161,7 @@ impl<'de> Deserialize<'de> for Command {
             CommandType::RequestUI => from_value(&from_nested(&mut map)?).map(Command::RequestUI),
             CommandType::SetNightMode => from_value(&from_nested(&mut map)?).map(Command::SetNightMode),
             CommandType::SetLimitedUI => from_value(&from_nested(&mut map)?).map(Command::SetLimitedUI),
+            CommandType::ChangeMapZoomLevel => from_value(&from_nested(&mut map)?).map(Command::ChangeMapZoomLevel),
             CommandType::IApSendMessage => from_value(&from_nested(&mut map)?).map(Command::IApSendMessage),
             CommandType::HidSendReport => from_value(&from_flat(map)).map(Command::HidSendReport),
         }
@@ -175,7 +179,7 @@ struct CommandRawTypeRef {
 mod tests {
     use catplay_plist::{Dictionary, Value, from_bytes, to_writer_binary};
 
-    use crate::msg::{Command, CommandRequestUI};
+    use crate::msg::{Command, CommandChangeMapZoomLevel, CommandForceKeyFrame, CommandRequestUI};
 
     #[test]
     fn test_serialize_payload_direct_hid() {
@@ -258,5 +262,67 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn test_deserialize_change_map_zoom_level() {
+        // Sent by a VW MMX head unit when zooming the map on the instrument cluster.
+        let mut params = Dictionary::new();
+        params.insert("zoomDirection".into(), 1u64.into());
+        params.insert("uuid".into(), "b7e6c5a0-2222-4000-8000-000000000002".into());
+
+        let mut command = Dictionary::new();
+        command.insert("type".into(), "changeMapZoomLevel".into());
+        command.insert("params".into(), params.into());
+
+        let mut payload = Vec::new();
+        to_writer_binary(&mut payload, &command).unwrap();
+
+        let expected = Command::ChangeMapZoomLevel(CommandChangeMapZoomLevel {
+            zoom_direction: 1,
+            uuid: "b7e6c5a0-2222-4000-8000-000000000002".into(),
+        });
+        let deserialized = Command::deserialize(&payload).unwrap();
+        assert_eq!(deserialized, expected);
+
+        // The command is proxied to the iPhone, so it must survive serialization.
+        let reserialized = Command::deserialize(&deserialized.serialize().unwrap()).unwrap();
+        assert_eq!(reserialized, expected);
+    }
+
+    #[test]
+    fn test_deserialize_force_key_frame_with_uuid() {
+        // Sent by a VW MMX head unit to request a keyframe for the instrument cluster (alt screen).
+        let mut params = Dictionary::new();
+        params.insert("uuid".into(), "b7e6c5a0-2222-4000-8000-000000000002".into());
+
+        let mut command = Dictionary::new();
+        command.insert("type".into(), "forceKeyFrame".into());
+        command.insert("params".into(), params.into());
+
+        let mut payload = Vec::new();
+        to_writer_binary(&mut payload, &command).unwrap();
+
+        let expected = Command::ForceKeyFrame(CommandForceKeyFrame {
+            uuid: Some("b7e6c5a0-2222-4000-8000-000000000002".into()),
+        });
+        let deserialized = Command::deserialize(&payload).unwrap();
+        assert_eq!(deserialized, expected);
+
+        // The command is proxied to the iPhone, so the display UUID must survive serialization.
+        let reserialized = from_bytes::<Value>(&deserialized.serialize().unwrap()).unwrap();
+        assert_eq!(reserialized, command.into());
+    }
+
+    #[test]
+    fn test_serialize_force_key_frame_without_uuid() {
+        let mut command = Dictionary::new();
+        command.insert("type".into(), "forceKeyFrame".into());
+        command.insert("params".into(), Dictionary::new().into());
+
+        let payload = Command::ForceKeyFrame(CommandForceKeyFrame { uuid: None })
+            .serialize()
+            .unwrap();
+        assert_eq!(from_bytes::<Value>(&payload).unwrap(), command.into());
     }
 }

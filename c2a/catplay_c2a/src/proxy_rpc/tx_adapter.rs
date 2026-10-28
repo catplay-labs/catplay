@@ -4,7 +4,7 @@ use catplay_carplay::{
     audio::{AudioPlayerBox, AudioRecorderBox, AudioStreamBasicDescription},
     carplay_rx::AirPlayReceiverHandleRef,
     modes::AirPlayModeState,
-    msg::{AudioFormat, AudioType, Command, InfoMessageResponse, StreamType},
+    msg::{AudioFormat, AudioType, Command, ControllerFeature, InfoMessageResponse, StreamType},
     rtsp_frame::{RtspError, RtspResponse, RtspResult},
     screen::rx::ScreenReceiverSinkBox,
 };
@@ -26,6 +26,14 @@ pub enum TxAdapterOp {
     IphoneDisconnected,
     ScreenChannel {
         channel: mpsc::UnboundedReceiver<ScreenProxyOp>,
+    },
+    AltScreenChannel {
+        channel: mpsc::UnboundedReceiver<ScreenProxyOp>,
+        uuid: Option<String>,
+    },
+    NegotiateFeatures {
+        offered: Vec<ControllerFeature>,
+        enabled: oneshot::Sender<Vec<ControllerFeature>>,
     },
     Modes {
         modes: AirPlayModeState,
@@ -139,6 +147,24 @@ impl TxAdapter {
             .car
             .unbounded_send(TxAdapterOp::ScreenChannel { channel });
         Ok(Box::new(screen.0))
+    }
+
+    pub async fn proxy_alt_screen(&mut self, _latency: Duration, uuid: Option<String>) -> RtspResult<ScreenReceiverSinkBox> {
+        let screen = ScreenProxy::new(self.handle.clone().expect("handle missing"));
+        let channel = screen.1;
+        let _ = self
+            .car
+            .unbounded_send(TxAdapterOp::AltScreenChannel { channel, uuid });
+        Ok(Box::new(screen.0))
+    }
+
+    pub async fn proxy_features(&mut self, offered: &[ControllerFeature]) -> Vec<ControllerFeature> {
+        let os = oneshot::channel();
+        let _ = self.car.unbounded_send(TxAdapterOp::NegotiateFeatures {
+            offered: offered.into(),
+            enabled: os.0,
+        });
+        os.1.await.unwrap_or_default()
     }
 
     pub fn on_init(&mut self, handle: AirPlayReceiverHandleRef) {

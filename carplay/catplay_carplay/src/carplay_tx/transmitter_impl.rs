@@ -50,6 +50,10 @@ struct MediaStreams {
     #[reconcile(|err| AirPlayTransmitterSessionError::StreamDisconnected(self.screen.stream_type(), err))]
     #[shutdown]
     screen: StreamState<TcpHelper<ScreenTransmitSession>>,
+    #[sleep]
+    #[reconcile(|err| AirPlayTransmitterSessionError::StreamDisconnected(self.alt_screen.stream_type(), err))]
+    #[shutdown]
+    alt_screen: StreamState<TcpHelper<ScreenTransmitSession>>,
 
     #[sleep]
     #[reconcile(|err| AirPlayTransmitterSessionError::StreamDisconnected(self.main_audio.stream_type(), err))]
@@ -68,6 +72,7 @@ impl Default for MediaStreams {
             main_audio: StreamState::new(StreamType::MainAudio),
             alt_audio: StreamState::new(StreamType::AltAudio),
             screen: StreamState::new(StreamType::Screen),
+            alt_screen: StreamState::new(StreamType::AltScreen),
         }
     }
 }
@@ -113,8 +118,8 @@ impl AirPlayTransmitterImpl {
                 debug!("Received from TEARDOWN queue: {stream_type:?}");
                 if let Some(stream) = Self::find_audio_stream(media, stream_type) {
                     stream.teardown_audio(client.clone(), false);
-                } else if stream_type == StreamType::Screen {
-                    media.screen.teardown_screen(client.clone(), true);
+                } else if let Some(stream) = Self::find_screen_stream(media, stream_type) {
+                    stream.teardown_screen(client.clone(), true);
                 } else {
                     debug!("Unknown stream? {stream_type:?}");
                 }
@@ -134,6 +139,10 @@ impl AirPlayTransmitterImpl {
                 result?;
                 drained = true;
             }
+            if let Some(result) = media.alt_screen.drain_teardown().await {
+                result?;
+                drained = true;
+            }
 
             if !drained {
                 return Ok(());
@@ -150,8 +159,10 @@ impl AirPlayTransmitterImpl {
             }
         }
 
-        if media.screen.is_connected() {
-            return false;
+        for stream in [&mut media.screen, &mut media.alt_screen] {
+            if stream.is_connected() {
+                return false;
+            }
         }
 
         true
@@ -161,6 +172,14 @@ impl AirPlayTransmitterImpl {
         Some(match stream_type {
             StreamType::MainAudio | StreamType::MainHighAudio => &mut s.main_audio,
             StreamType::AltAudio => &mut s.alt_audio,
+            _ => return None,
+        })
+    }
+
+    fn find_screen_stream(s: &mut MediaStreams, stream_type: StreamType) -> Option<&mut StreamState<TcpHelper<ScreenTransmitSession>>> {
+        Some(match stream_type {
+            StreamType::Screen => &mut s.screen,
+            StreamType::AltScreen => &mut s.alt_screen,
             _ => return None,
         })
     }
@@ -276,11 +295,23 @@ impl AirPlayTransmitterImpl {
         })
     }
 
-    pub async fn do_setup_video(&mut self, stream_type: StreamType, latency: Duration) -> RtspResult<TeardownGuard<ScreenTransmitProxy>> {
+    /// Setup a screen stream of type `Screen` or `AltScreen`.
+    ///
+    /// The `Screen` stream always targets the first display. The `AltScreen` stream targets the display with the given `uuid`, or the
+    /// second display if no `uuid` is given.
+    pub async fn do_setup_video(
+        &mut self,
+        stream_type: StreamType,
+        latency: Duration,
+        uuid: Option<String>,
+    ) -> RtspResult<TeardownGuard<ScreenTransmitProxy>> {
         self.drain_teardown_queue().await?;
 
         loop {
-            match &mut self.media.screen {
+            let stream =
+                Self::find_screen_stream(&mut self.media, stream_type).ok_or(RtspError::ProtocolViolation("not a screen stream type"))?;
+
+            match &mut *stream {
                 StreamState::Unconnected { .. } => break,
                 StreamState::Stream { .. } => {
                     let client = self
@@ -288,10 +319,10 @@ impl AirPlayTransmitterImpl {
                         .client
                         .as_ref()
                         .ok_or(RtspError::ProtocolViolation("client missing"))?;
-                    self.media.screen.teardown_screen(client.clone(), true);
+                    stream.teardown_screen(client.clone(), true);
                 }
                 StreamState::Teardown { .. } => {
-                    if let Some(result) = self.media.screen.drain_teardown().await {
+                    if let Some(result) = stream.drain_teardown().await {
                         result?;
                     }
                 }
@@ -303,10 +334,12 @@ impl AirPlayTransmitterImpl {
             .info
             .as_ref()
             .ok_or(RtspError::ProtocolViolation("missing info"))?;
-        let display = info
-            .displays
-            .first()
-            .ok_or(RtspError::ProtocolViolation("missing display"))?;
+        let display = match (stream_type, uuid.as_deref()) {
+            (StreamType::AltScreen, Some(uuid)) => info.displays.iter().find(|display| display.uuid == uuid),
+            (StreamType::AltScreen, None) => info.displays.get(1),
+            _ => info.displays.first(),
+        }
+        .ok_or(RtspError::ProtocolViolation("missing display"))?;
         let media_clock = self
             .streams
             .media_clock
@@ -330,7 +363,7 @@ impl AirPlayTransmitterImpl {
         );
 
         let display_uuid = display.uuid.clone();
-        let setup = Setup::new(&[StreamDescriptionScreen::new(id, latency, &display_uuid).into()]);
+        let setup = Setup::new(&[StreamDescriptionScreen::new(id, stream_type, latency, &display_uuid).into()]);
         let guard = Self::create_guard(sink, stream_type, self.teardown_queue_tx.clone());
 
         info!("Sending screen SETUP: {setup:?}");
@@ -339,7 +372,7 @@ impl AirPlayTransmitterImpl {
             .streams
             .first()
             .ok_or(RtspError::ProtocolViolation("invalid SETUP response"))?;
-        if resp.stream_type != StreamType::Screen {
+        if resp.stream_type != stream_type {
             return Err(RtspError::ProtocolViolation("invalid SETUP response #2"));
         }
         info!("Screen setup response received: {resp:?}");
@@ -349,8 +382,8 @@ impl AirPlayTransmitterImpl {
 
         // TODO: await connection and reconcile it with media stream state lifecycle.
         let socket = spawn_fork("screen_tx", move || TcpHelper::connect_timeout(video_ip, Self::TCP_CONN_TIMEOUT_SCREEN, session))?;
-        self.media
-            .screen
+        Self::find_screen_stream(&mut self.media, stream_type)
+            .ok_or(RtspError::ProtocolViolation("not a screen stream type"))?
             .connect_with_uuid(socket, latency, display_uuid);
 
         Ok(guard)

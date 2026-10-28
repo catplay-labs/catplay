@@ -168,10 +168,10 @@ plist_struct! {
 }
 
 impl StreamDescriptionScreen {
-    pub fn new(stream_connection_id: u64, latency: Duration, uuid: &str) -> Self {
+    pub fn new(stream_connection_id: u64, stream_type: StreamType, latency: Duration, uuid: &str) -> Self {
         Self {
             stream_connection_id,
-            stream_type: StreamType::Screen,
+            stream_type,
             latency_ms: Some(latency.as_millis() as _),
             uuid: Some(uuid.into()),
         }
@@ -232,10 +232,10 @@ impl StreamDescriptionResponse {
         }
     }
 
-    pub fn new_screen(data_port: u16) -> Self {
+    pub fn new_screen(stream_type: StreamType, data_port: u16) -> Self {
         Self {
             data_port,
-            stream_type: StreamType::Screen,
+            stream_type,
             ..Default::default()
         }
     }

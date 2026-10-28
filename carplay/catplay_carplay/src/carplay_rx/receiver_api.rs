@@ -15,7 +15,7 @@ use crate::{
     carplay_rx::sink::AirPlayServerShared,
     clock::MediaClockBox,
     modes::{AirPlayModeState, AppState, ChangeModes, Resource, ResourceConstraint, ResourceID, ResourceTransferPriority},
-    msg::{AudioFormat, AudioType, Command, HidDevice, InfoMessageResponse, StreamType},
+    msg::{AudioFormat, AudioType, Command, ControllerFeature, HidDevice, InfoMessageResponse, StreamType},
     rtp::RtpReceiverError,
     rtsp_frame::{HttpStatus, RtspError, RtspFuture, RtspResponse, RtspResult},
     screen::rx::ScreenReceiverSinkBox,
@@ -84,6 +84,9 @@ pub trait AirPlayReceiverHandle: Send + Sync {
 
     /// Request keyframe after video decoder error (best-effort).
     fn request_keyframe(&self);
+
+    /// Request keyframe for the display identified by `uuid` (best-effort), for example the alt screen.
+    fn request_display_keyframe(&self, uuid: &str);
 
     /// Request UI to be shown. Required after screen Untake, among other things.
     fn request_ui(&self, url: &str);
@@ -185,6 +188,13 @@ pub trait AirPlayReceiverSink: AsyncShutdownDyn + EventReconcilerDyn<Error = Rts
         Ok(())
     }
 
+    /// Select which of the controller features offered by the device in the initial setup should be enabled.
+    ///
+    /// Only return features that are actually supported, for example [ControllerFeature::AltScreen] requires [Self::open_alt_screen].
+    async fn negotiate_features(&mut self, offered: &[ControllerFeature]) -> Vec<ControllerFeature> {
+        vec![]
+    }
+
     /// Allows raw response to incoming AirPlay commands; this is called before additional convenience callbacks for given command, if any.
     async fn on_command_raw(&mut self, command: &Command) -> RtspResult<RtspResponse> {
         Ok(RtspResponse::new(None, HttpStatus::Ok))
@@ -217,6 +227,13 @@ pub trait AirPlayReceiverSink: AsyncShutdownDyn + EventReconcilerDyn<Error = Rts
     ///
     /// Note that in some cases the session may continue with a closed video sink.
     async fn open_screen(&mut self, latency: Duration) -> RtspResult<ScreenReceiverSinkBox> {
+        Err(RtspError::NotSupported)
+    }
+
+    /// Open screen sink for the alt screen (for example, an instrument cluster) identified by the display `uuid`.
+    ///
+    /// Only called if [ControllerFeature::AltScreen] was enabled by [Self::negotiate_features].
+    async fn open_alt_screen(&mut self, latency: Duration, uuid: Option<String>) -> RtspResult<ScreenReceiverSinkBox> {
         Err(RtspError::NotSupported)
     }
 
