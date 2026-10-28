@@ -836,6 +836,31 @@ impl CsmSession for CarPlayClientSession {
             }
         }
 
+        if packet.cast::<StartCommunicationsUpdates>().is_some() {
+            self.send(
+                &CommunicationsUpdate {
+                    signal_strength: Some(CommunicationsUpdateSignalStrength::Value5Bars),
+                    registration_status: Some(CommunicationsUpdateRegistrationStatus::RegisteredHome),
+                    airplane_mode_status: Some(false),
+                    carrier_name: Some("Mobile".into()),
+                    cellular_supported: Some(true),
+                    telephony_enabled: Some(true),
+                    face_time_audio_enabled: Some(false),
+                    face_time_video_enabled: Some(false),
+                    mute_status: Some(false),
+                    current_call_count: Some(0),
+                    new_voicemail_count: Some(0),
+                    initiate_call_available: Some(false),
+                    end_and_accept_available: Some(false),
+                    hold_and_accept_available: Some(false),
+                    swap_available: Some(false),
+                    merge_available: Some(false),
+                    hold_available: Some(false),
+                },
+                &_handle,
+            )?;
+        }
+
         if let Some(_scu) = packet.cast::<StartCallStateUpdates>() {
             debug!("Got call state request");
             self.send(&CallStateUpdate::default(), &_handle)?;
