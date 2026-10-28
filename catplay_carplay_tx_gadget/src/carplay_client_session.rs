@@ -16,6 +16,7 @@ use log::{debug, warn};
 
 #[derive(Default)]
 pub struct CarPlayClientSession {
+    id: IdentificationInformation,
     start: Option<Instant>,
     artwork_tx: Option<u8>,
 }
@@ -699,6 +700,7 @@ impl CsmSession for CarPlayClientSession {
         warn!("-> Incoming packet @ {:?}: {:?}", Instant::now() - self.start.unwrap(), packet);
 
         if let Some(_id) = IdentificationInformation::cast(&packet) {
+            self.id = _id.clone();
             let supports_modern_carplay =
                 IdentificationInformation::unpack_ids(&_id.messages_sent_by_accessory).contains(&CarPlayStartSession::PACKET_ID);
             debug!("Identification accepted! Modern CarPlay: {supports_modern_carplay}");
@@ -728,42 +730,55 @@ impl CsmSession for CarPlayClientSession {
         if let Some(_response) = packet.cast::<AuthenticationResponse>() {
             debug!("Authentication accepted!");
             self.send(&AuthenticationSucceeded::default(), &_handle)?;
-            self.send(
-                &DeviceUUIDUpdate {
-                    uuid: "869556BE-4CE7-4602-9EB9-023B2A1E86FE".into(),
-                },
-                &_handle,
-            )?;
-            self.send(
-                &DeviceLanguageUpdate {
-                    device_language: Some("en".into()),
-                },
-                &_handle,
-            )?;
-            self.send(
-                &DeviceInformationUpdate {
-                    device_name: Some("iPhone SIM".into()),
-                },
-                &_handle,
-            )?;
-            self.send(
-                &DeviceTransportIdentifierNotification {
-                    // TODO: get this from g_iphone later
-                    usb_transport_identifier: Some("00008130000E044E384B1D3ADDDDDDD000BADCAD".into()),
-                    // TODO: use real one later
-                    bluetooth_transport_identifier: Some("aa:bb:cc:dd:ee:ff".into()),
-                },
-                &_handle,
-            )?;
+            if self.id.wants_rx(DeviceUUIDUpdate::PACKET_ID) {
+                self.send(
+                    &DeviceUUIDUpdate {
+                        uuid: "869556BE-4CE7-4602-9EB9-023B2A1E86FE".into(),
+                    },
+                    &_handle,
+                )?;
+            }
+            if self.id.wants_rx(DeviceLanguageUpdate::PACKET_ID) {
+                self.send(
+                    &DeviceLanguageUpdate {
+                        device_language: Some("en".into()),
+                    },
+                    &_handle,
+                )?;
+            }
+            if self.id.wants_rx(DeviceInformationUpdate::PACKET_ID) {
+                self.send(
+                    &DeviceInformationUpdate {
+                        device_name: Some("iPhone SIM".into()),
+                    },
+                    &_handle,
+                )?;
+            }
+            if self
+                .id
+                .wants_rx(DeviceTransportIdentifierNotification::PACKET_ID)
+            {
+                self.send(
+                    &DeviceTransportIdentifierNotification {
+                        // TODO: get this from g_iphone later
+                        usb_transport_identifier: Some("00008130000E044E384B1D3ADDDDDDD000BADCAD".into()),
+                        // TODO: use real one later
+                        bluetooth_transport_identifier: Some("aa:bb:cc:dd:ee:ff".into()),
+                    },
+                    &_handle,
+                )?;
+            }
 
-            self.send(
-                &DeviceTimeUpdate {
-                    seconds_since_reference_date: 1_445_470_140,
-                    time_zone_offset_minutes: 0,
-                    daylight_savings_offset_minutes: 0,
-                },
-                &_handle,
-            )?;
+            if self.id.wants_rx(DeviceTimeUpdate::PACKET_ID) {
+                self.send(
+                    &DeviceTimeUpdate {
+                        seconds_since_reference_date: 1_445_470_140,
+                        time_zone_offset_minutes: 0,
+                        daylight_savings_offset_minutes: 0,
+                    },
+                    &_handle,
+                )?;
+            }
             self.send(
                 &StartLocationInformation {
                     global_positioning_system_fix_data: CsmFlag::Yes,
