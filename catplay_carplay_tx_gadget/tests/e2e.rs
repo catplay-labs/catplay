@@ -7,7 +7,7 @@ use catplay_carplay::{
 use catplay_carplay_rx_gadget::{CarPlayUsbGadget, CarPlayUsbGadgetState};
 use catplay_carplay_tx_gadget::client::{CarPlayUsbClientGadget, CarPlayUsbClientGadgetStatus};
 use catplay_hap::HomekitStorageFile;
-use catplay_iap2_usb::gadget::GadgetHelper;
+use catplay_iap2_usb_gadget::gadget::GadgetHelper;
 use catplay_tracing::logger::setup_test_logger;
 use catplay_util::{AsyncShutdown, EventReconciler, EventSleeper};
 use log::info;
@@ -27,6 +27,7 @@ impl EventReconciler for MockSink {
 impl AsyncShutdown for MockSink {}
 
 #[tokio::test]
+#[ignore = "needs root and the dummy_hcd kernel module (two UDCs)"]
 async fn test_gadget_handshake() -> Result<(), Box<dyn Error>> {
     setup_test_logger(true);
 

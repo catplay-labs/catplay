@@ -1,4 +1,4 @@
-// error-pattern: field `raw` of struct `catplay_reflect::__private::Index16` is private
+// error-pattern: Index16` is private
 
 use core::num::NonZeroU16;
 use catplay_reflect::static_strings;

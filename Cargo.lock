@@ -396,6 +396,7 @@ dependencies = [
  "catplay_hap",
  "catplay_iap2_client",
  "catplay_iap2_usb",
+ "catplay_iap2_usb_gadget",
  "catplay_iap2_usb_host",
  "catplay_lingo",
  "catplay_tracing",
