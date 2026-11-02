@@ -195,8 +195,15 @@ impl<T: RtspReceiverCallback> TcpSession for RtspReceiver<T> {
                     resp
                 }
                 Some(Err(err)) => {
-                    warn!("Returning {} in {took:?} because of {err} in response to {req}", err.to_code());
-                    RtspResponse::new(Some(cseq), err.to_code())
+                    // Some handlers answer by returning `RtspError::Code(200 OK)`; that is a normal reply, not a problem.
+                    let code = err.to_code();
+                    let level = if (200..300).contains(&code.as_code()) {
+                        Level::Debug
+                    } else {
+                        Level::Warn
+                    };
+                    log!(level, "Returning {code} in {took:?} because of {err} in response to {req}");
+                    RtspResponse::new(Some(cseq), code)
                 }
             };
 
