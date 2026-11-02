@@ -357,7 +357,7 @@ impl AirPlayTransmitterImpl {
     }
 
     fn handle_feedback_payload(&mut self, payload: FeedbackPayload) {
-        warn!("Stream feedback: {payload:?}");
+        debug!("Stream feedback: {payload:?}");
     }
 
     async fn send_feedback(&mut self) -> Result<(), AirPlayTransmitterSessionError> {

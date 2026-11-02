@@ -8,7 +8,7 @@ use bytes::BytesMut;
 use catplay_tokio::{CItem, TcpSession, TcpSink};
 use catplay_tracing::{strace, tracer::SessionTracer};
 use catplay_util::{AsyncShutdown, EventReconciler, EventSink, EventSleeper, EventToken};
-use log::{debug, warn};
+use log::{Level, debug, log, warn};
 
 use crate::{
     cipher::AirPlayCipherSaltType,
@@ -149,7 +149,9 @@ impl<T: RtspReceiverCallback> TcpSession for RtspReceiver<T> {
 
             let start = Instant::now();
 
-            warn!("Received request: \n{req}");
+            // Keep-alives arrive every second for the whole session; log them below warn.
+            let level = if req.is_keepalive() { Level::Debug } else { Level::Warn };
+            log!(level, "Received request: \n{req}");
 
             #[cfg(feature = "tracing")]
             if let Some(tracer) = self.tracer.as_ref() {
@@ -189,7 +191,7 @@ impl<T: RtspReceiverCallback> TcpSession for RtspReceiver<T> {
             let resp_to_send = match resp.response {
                 None => response,
                 Some(Ok(resp)) => {
-                    warn!("Returning generated response in {took:?} to {req}\n\n{resp}");
+                    log!(level, "Returning generated response in {took:?} to {req}\n\n{resp}");
                     resp
                 }
                 Some(Err(err)) => {
@@ -204,7 +206,7 @@ impl<T: RtspReceiverCallback> TcpSession for RtspReceiver<T> {
                 strace!(tracer, "Sending response: \n{}", resp_for_trace);
             }
 
-            warn!("Sending response: \n{resp_to_send}");
+            log!(level, "Sending response: \n{resp_to_send}");
 
             sink.write(vec![resp_to_send.into()])?;
 
