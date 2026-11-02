@@ -13,6 +13,16 @@ use crate::proxy::pcm_proxy::PcmProxyPlayer;
 pub struct AudioProxyUtil;
 
 impl AudioProxyUtil {
+    /// PCM buffer for the proxied stream towards the car.
+    ///
+    /// Media (MainHighAudio) gets a larger buffer than prompts, alerts and calls, which favour latency.
+    fn pcm_latency(stream_type: StreamType) -> Duration {
+        match stream_type {
+            StreamType::MainHighAudio => Duration::from_millis(75),
+            _ => Duration::from_millis(32), // 75 too small
+        }
+    }
+
     pub async fn open_audio(
         car: AirPlayTransmitterProxyRef,
         _latency: Duration,
@@ -47,13 +57,13 @@ impl AudioProxyUtil {
 
         let player_guard = audio_pair.0.guard.clone();
 
+        // Decide the buffer from the stream type the iPhone asked for, before the remap below.
+        // Checking after the remap made the MainHighAudio branch unreachable.
+        let pcm_latency = Self::pcm_latency(stream_type);
+
+        // The car only ever sees decoded PCM, so media goes out as ordinary MainAudio.
         if stream_type == StreamType::MainHighAudio {
             stream_type = StreamType::MainAudio;
-        }
-
-        let mut pcm_latency = Duration::from_millis(32); // 75 too small
-        if stream_type == StreamType::MainHighAudio {
-            pcm_latency = Duration::from_millis(75);
         }
 
         let guard_fut = car.setup_audio(
@@ -71,5 +81,26 @@ impl AudioProxyUtil {
         player_guard.lock().unwrap().replace(guard);
 
         Ok((Box::new(audio_pair.0), pending_mic))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn media_stream_gets_the_larger_buffer() {
+        assert_eq!(AudioProxyUtil::pcm_latency(StreamType::MainHighAudio), Duration::from_millis(75));
+    }
+
+    #[test]
+    fn other_streams_keep_the_low_latency_buffer() {
+        for stream_type in [StreamType::MainAudio, StreamType::AltAudio, StreamType::GeneralAudio] {
+            assert_eq!(
+                AudioProxyUtil::pcm_latency(stream_type),
+                Duration::from_millis(32),
+                "{stream_type:?}"
+            );
+        }
     }
 }
