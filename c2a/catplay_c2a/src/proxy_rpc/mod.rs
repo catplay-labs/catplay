@@ -1,3 +1,4 @@
+mod audio_info;
 mod alt_screen_manager;
 mod car_manager;
 mod car_to_iphone_command_task;

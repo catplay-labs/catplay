@@ -30,6 +30,8 @@ use crate::{
     },
 };
 
+use super::audio_info::filter_audio_sample_rates;
+
 pub struct CarManager {
     // TODO dont wrap the ref with TeardownGuard...
     car_state: TeardownGuard<AirPlayTransmitterProxyRef>,
@@ -482,6 +484,7 @@ impl CarManager {
             // Sync data based on car probe
             // Time-sensitive fields: modes, night_mode (best-effort initial sync)
             // Use cached info; protocol says /info could be called more than once, but that never happens in practice.
+            filter_audio_sample_rates(&mut info.audio_formats, &other.audio_formats);
             let info_clone = info.clone();
 
             let mut displays = other.displays;
