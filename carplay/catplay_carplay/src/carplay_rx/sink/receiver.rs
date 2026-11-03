@@ -126,6 +126,9 @@ struct Streams {
     #[shutdown(take)]
     // #[reconcile(AirPlayReceiverSessionError::Screen)]
     screen: Option<TcpHelper<ScreenReceiverSession>>,
+    #[sleep]
+    #[shutdown(take)]
+    alt_screen: Option<TcpHelper<ScreenReceiverSession>>,
     #[shutdown(take)]
     #[sleep]
     #[reconcile(AirPlayReceiverSessionError::Rtp)]
@@ -485,6 +488,12 @@ impl AirPlayReceiver {
                         matched = true;
                     }
                 }
+                StreamType::AltScreen => {
+                    if let Some(mut screen) = self.streams.alt_screen.take() {
+                        screen.shutdown().await;
+                        matched = true;
+                    }
+                }
                 _ => {}
             }
 
@@ -599,15 +608,33 @@ impl AirPlayReceiver {
     }
 
     async fn setup_screen(&mut self, stream: StreamDescriptionScreen) -> RtspResult<StreamDescriptionResponse> {
-        if self.streams.screen.is_some() {
+        let stream_type = stream.stream_type;
+        let existing = match stream_type {
+            StreamType::Screen => &self.streams.screen,
+            StreamType::AltScreen => &self.streams.alt_screen,
+            _ => return Err(RtspError::Code(HttpStatus::NotAcceptable)),
+        };
+
+        if existing.is_some() {
             error!("Attempted to create video sink without TEARDOWN of previous one!");
             return Err(HttpStatus::BadRequest)?;
         }
 
-        info!("Opening screen stream with latency {:?}", stream.latency_ms);
+        info!(
+            "Opening screen stream with type {:?} latency {:?} uuid {:?}",
+            stream_type, stream.latency_ms, stream.uuid
+        );
 
         let latency = Duration::from_millis(stream.latency_ms.unwrap_or(0));
-        let mut screen_sink = match self.sink.open_screen(latency).await {
+        let screen_sink = match stream_type {
+            StreamType::AltScreen => {
+                self.sink
+                    .open_alt_screen(latency, stream.uuid.clone())
+                    .await
+            }
+            _ => self.sink.open_screen(latency).await,
+        };
+        let mut screen_sink = match screen_sink {
             Ok(sink) => sink,
             Err(err) => {
                 error!("Failed to open video sink: {err}");
@@ -636,9 +663,12 @@ impl AirPlayReceiver {
         );
 
         let (helper, local) = spawn_fork("screen_rx", move || TcpHelper::accept_timeout(bind_ip, Self::TCP_REVERSE_CONN_TIMEOUT, recv))?;
-        self.streams.screen.replace(helper);
+        match stream_type {
+            StreamType::AltScreen => self.streams.alt_screen.replace(helper),
+            _ => self.streams.screen.replace(helper),
+        };
 
-        Ok(StreamDescriptionResponse::new_screen(local.port()))
+        Ok(StreamDescriptionResponse::new_screen(stream_type, local.port()))
     }
 
     async fn setup_audio(&mut self, mut stream: StreamDescriptionAudio) -> RtspResult<StreamDescriptionResponse> {
@@ -876,12 +906,17 @@ impl AirPlayReceiver {
 
         let (keep_alive_socket, keep_alive_bind) = UdpHelper::bind(bind_ip, KeepAliveServer::new())?;
 
+        // Never enable a feature that the device did not offer
+        let mut enabled_features = self.sink.negotiate_features(&data.features).await;
+        enabled_features.retain(|feature| data.features.contains(feature));
+        info!("Enabled controller features: {enabled_features:?}");
+
         let mut r = InitialSetupResponse {
             event_port: events.unwrap_or(0),
             keep_alive_port: Some(keep_alive_bind.port()),
             streams: None,
             timing_port: timing_bind.port(),
-            enabled_features: vec![/*ControllerFeature::H264Level51*/],
+            enabled_features,
         };
 
         if self.features.contains(AirPlayFeature::CAR) && Self::CARPLAY_FORCE_HEVC {
@@ -974,6 +1009,6 @@ impl AirPlayReceiver {
 
     fn is_idle(&self) -> bool {
         let s = &self.streams;
-        s.main_audio.is_none() && s.alt_audio.is_none() && s.screen.is_none()
+        s.main_audio.is_none() && s.alt_audio.is_none() && s.screen.is_none() && s.alt_screen.is_none()
     }
 }

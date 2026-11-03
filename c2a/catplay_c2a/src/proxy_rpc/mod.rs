@@ -1,3 +1,4 @@
+mod alt_screen_manager;
 mod car_manager;
 mod car_to_iphone_command_task;
 mod modes_arbiter;
@@ -7,6 +8,7 @@ mod proxy_screen;
 mod rx_bridge;
 mod tx_adapter;
 
+pub use alt_screen_manager::*;
 pub use car_manager::*;
 pub use modes_arbiter::*;
 pub use overlay_default::*;

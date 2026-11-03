@@ -98,6 +98,9 @@ pub trait AirPlayTransmitter: Send + 'static {
 
     fn info_cached(&self) -> &InfoMessageResponse;
 
+    /// Controller features enabled by the remote in response to the initial SETUP.
+    fn enabled_features(&self) -> &[ControllerFeature];
+
     fn media_clock(&self) -> MediaClockBox;
 
     /// Pop next queued incoming command, if any.
@@ -112,6 +115,11 @@ pub trait AirPlayTransmitter: Send + 'static {
 
     /// Setup screen stream.
     async fn setup_screen(&self, latency: Duration) -> RtspResult<TeardownGuard<ScreenTransmitProxy>>;
+
+    /// Setup alt screen stream (for example, an instrument cluster) for the display with the given `uuid`.
+    ///
+    /// Requires the [ControllerFeature::AltScreen] feature to be enabled by the remote.
+    async fn setup_alt_screen(&self, latency: Duration, uuid: Option<String>) -> RtspResult<TeardownGuard<ScreenTransmitProxy>>;
 
     /// Setup audio stream.
     async fn setup_audio(

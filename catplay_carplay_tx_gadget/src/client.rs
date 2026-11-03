@@ -12,6 +12,7 @@ use catplay_carplay::{
     },
     common::AirPlayBonjourEntry,
     ctrl::CarPlayCtrlServer,
+    msg::ControllerFeature,
 };
 use catplay_hap::HomekitStorageRef;
 use catplay_iap2_usb::GadgetResult;
@@ -85,7 +86,8 @@ impl CarPlayUsbClientGadget {
         let bootstrap = AirPlayTransmitterBootstrap {
             homekit: self.homekit.clone(),
             peer_ip,
-            controller_features: vec![],
+            // Features that can be proxied to an iPhone (only enabled towards the iPhone if also enabled by the car).
+            controller_features: vec![ControllerFeature::AltScreen, ControllerFeature::ViewAreas],
             remote_homekit_id: invite.data.pi,
         };
 

@@ -5,7 +5,7 @@ use catplay_carplay::{
     audio::{AudioPlayerBox, AudioRecorderBox, AudioStreamBasicDescription},
     carplay_rx::{AirPlayReceiverHandleRef, AirPlayReceiverSink},
     modes::AirPlayModeState,
-    msg::{AudioFormat, AudioType, Command, InfoMessageResponse, StreamType},
+    msg::{AudioFormat, AudioType, Command, ControllerFeature, InfoMessageResponse, StreamType},
     rtsp_frame::{RtspError, RtspResponse, RtspResult},
     screen::rx::ScreenReceiverSinkBox,
 };
@@ -107,9 +107,23 @@ impl AirPlayReceiverSink for CarPlayRxSession {
         // TODO check busy status
         Ok(())
     }
+
+    async fn negotiate_features(&mut self, offered: &[ControllerFeature]) -> Vec<ControllerFeature> {
+        if self.reject {
+            return vec![];
+        }
+
+        self.tx().proxy_features(offered).await
+    }
+
     async fn open_screen(&mut self, latency: Duration) -> RtspResult<ScreenReceiverSinkBox> {
         self.reject_if_needed()?;
         self.tx().proxy_screen(latency).await
+    }
+
+    async fn open_alt_screen(&mut self, latency: Duration, uuid: Option<String>) -> RtspResult<ScreenReceiverSinkBox> {
+        self.reject_if_needed()?;
+        self.tx().proxy_alt_screen(latency, uuid).await
     }
 
     async fn on_command_raw(&mut self, command: &Command) -> RtspResult<RtspResponse> {

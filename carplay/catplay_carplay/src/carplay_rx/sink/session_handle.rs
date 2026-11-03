@@ -122,7 +122,13 @@ impl AirPlayReceiverHandle for AirPlayReceiverHandleImpl {
     }
 
     fn request_keyframe(&self) {
-        self.send_command_and_forget(Command::ForceKeyFrame(CommandForceKeyFrame {}));
+        self.send_command_and_forget(Command::ForceKeyFrame(CommandForceKeyFrame { uuid: None }));
+    }
+
+    fn request_display_keyframe(&self, uuid: &str) {
+        self.send_command_and_forget(Command::ForceKeyFrame(CommandForceKeyFrame {
+            uuid: Some(uuid.to_owned()),
+        }));
     }
 
     fn close(&self, err: RtspError) {

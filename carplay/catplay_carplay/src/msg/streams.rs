@@ -14,10 +14,11 @@ plist_enum_repr! {
         Screen = 110,
 
         // Modern CarPlay
+        /// Secondary display, such as an instrument cluster (requires the `altScreen` controller feature).
+        AltScreen = 111,
         /*BufferedAudio = 103,
         AuxOutAudio = 106,
         AuxInAudio = 107,
-        AltScreen = 111,
         MainAudioWithRedundancy = 104,
         AltAudioWithRedundancy = 105,
         AuxOutAudioWithRedundancy = 108,

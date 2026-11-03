@@ -188,7 +188,7 @@ async fn setups_video_audio_streams() {
 
     let mut _transmitter = AirPlayTransmitterImpl::connect(bootstrap).await.unwrap();
     let mut sink = _transmitter
-        .do_setup_video(StreamType::Screen, Duration::from_millis(75))
+        .do_setup_video(StreamType::Screen, Duration::from_millis(75), None)
         .await
         .unwrap();
     sink.push_avcc_config(config).unwrap();

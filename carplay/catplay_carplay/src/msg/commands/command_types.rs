@@ -22,6 +22,7 @@ pub enum CommandType {
     SetNightMode,
     SetLimitedUI,
     IApSendMessage,
+    ChangeMapZoomLevel,
     // updateVehicleInformation
     // flushAudio
     // performHapticFeedback
@@ -32,7 +33,6 @@ pub enum CommandType {
     // changeUIContext
     // uiAppearanceUpdate
     // mapAppearanceUpdate
-    // changeMapZoomLevel
 }
 
 impl std::fmt::Display for CommandType {
@@ -65,6 +65,7 @@ impl FromStr for CommandType {
             "setNightMode" => CommandType::SetNightMode,
             "setLimitedUI" => CommandType::SetLimitedUI,
             "iAPSendMessage" => CommandType::IApSendMessage,
+            "changeMapZoomLevel" => CommandType::ChangeMapZoomLevel,
 
             _ => return Err(()),
         };
@@ -88,6 +89,7 @@ impl AsRef<str> for CommandType {
             CommandType::SetNightMode => "setNightMode",
             CommandType::SetLimitedUI => "setLimitedUI",
             CommandType::IApSendMessage => "iAPSendMessage",
+            CommandType::ChangeMapZoomLevel => "changeMapZoomLevel",
         }
     }
 }
@@ -107,7 +109,8 @@ impl CommandType {
             | CommandType::RequestSiri
             | CommandType::RequestUI
             | CommandType::SetNightMode
-            | CommandType::SetLimitedUI => CommandDirection::FromAccessory,
+            | CommandType::SetLimitedUI
+            | CommandType::ChangeMapZoomLevel => CommandDirection::FromAccessory,
 
             CommandType::IApSendMessage => CommandDirection::Bidirectional,
         }
