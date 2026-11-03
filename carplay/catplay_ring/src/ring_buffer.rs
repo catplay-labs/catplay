@@ -111,6 +111,63 @@ pub struct RingBuffer<T: Copy + Default> {
 
 unsafe impl<T: Copy + Default> Sync for RingBuffer<T> {}
 
+/// Lazily reads a snapshot of the ring timeline without copying samples.
+///
+/// Dropping the iterator commits only the segments it yielded, using a single
+/// atomic update. Unvisited segments remain unread, including after `break`.
+#[must_use = "segments are consumed only when the iterator is advanced"]
+pub struct RingSegments<'a, T: Copy + Default> {
+    ring: &'a RingBuffer<T>,
+    cursor: usize,
+    overflow: usize,
+    readable: usize,
+    underflow: usize,
+    consumed: usize,
+}
+
+impl<'a, T: Copy + Default> Iterator for RingSegments<'a, T> {
+    type Item = RingSegment<'a, T>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let segment = if self.overflow > 0 {
+            RingSegment::Overflow(std::mem::take(&mut self.overflow))
+        } else if self.readable > 0 {
+            let segment = match self.ring.search_gap_abs(self.cursor, self.readable) {
+                Some((start, len)) if start == self.cursor => RingSegment::Gap(len),
+                gap => {
+                    let len = gap.map_or(self.readable, |(start, _)| start - self.cursor);
+                    let head = self.ring.logical_to_ring_index(self.cursor);
+                    let data = unsafe { (&*self.ring.ring.get()).as_slice() };
+                    RingSegment::Data(&data[head..head + len])
+                }
+            };
+            self.cursor += segment.len();
+            self.readable -= segment.len();
+            segment
+        } else if self.underflow > 0 {
+            RingSegment::Underflow(std::mem::take(&mut self.underflow))
+        } else {
+            return None;
+        };
+        self.consumed += segment.len();
+        Some(segment)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let fixed = usize::from(self.overflow > 0) + usize::from(self.underflow > 0);
+        (fixed + usize::from(self.readable > 0), Some(fixed + self.readable))
+    }
+}
+
+impl<T: Copy + Default> std::iter::FusedIterator for RingSegments<'_, T> {}
+
+impl<T: Copy + Default> Drop for RingSegments<'_, T> {
+    fn drop(&mut self) {
+        self.ring.read_commit(self.consumed);
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct XRunReport {
     // Samples that should have been read *before* valid data,
@@ -293,6 +350,11 @@ impl<T: Copy + Default> RingConsumer<T> {
         self.0.read_commit(n)
     }
 
+    /// See [`RingBuffer::iter_segments`].
+    pub fn iter_segments(&self, requested: usize, emit_underflow: bool) -> RingSegments<'_, T> {
+        self.0.iter_segments(requested, emit_underflow)
+    }
+
     pub fn read_segments<'a, F>(&'a self, requested: usize, emit_underflow: bool, emit: F)
     where
         F: FnMut(RingSegment<'a, T>),
@@ -322,109 +384,69 @@ impl<T: Copy + Default> RingBuffer<T> {
         }
     }
 
-    pub fn read_segments<'a, F>(&'a self, requested: usize, emit_underflow: bool, mut emit: F)
+    pub fn read_segments<'a, F>(&'a self, requested: usize, emit_underflow: bool, emit: F)
     where
         F: FnMut(RingSegment<'a, T>),
     {
-        if requested == 0 {
-            return;
-        }
+        self.iter_segments(requested, emit_underflow).for_each(emit);
+    }
 
+    /// Iterates over at most `requested` samples of the current timeline.
+    ///
+    /// Data segments borrow the ring storage. Missing samples are emitted as
+    /// underflow only when `emit_underflow` is true. The read position advances
+    /// by the yielded segments when the iterator is dropped; stopping early
+    /// leaves the rest unread. Do not perform other reads or manually commit
+    /// samples while this iterator is alive.
+    pub fn iter_segments(&self, requested: usize, emit_underflow: bool) -> RingSegments<'_, T> {
         let read = self.read_head.load(Ordering::Relaxed);
         let write = self.write_head.load(Ordering::Acquire);
-
-        let lost = write.saturating_sub(self.capacity).saturating_sub(read);
-        let overflow = lost.min(requested);
-
-        if overflow > 0 {
-            emit(RingSegment::Overflow(overflow));
-        }
-
+        let overflow = write
+            .saturating_sub(self.capacity)
+            .saturating_sub(read)
+            .min(requested);
         let cursor = read + overflow;
-        let mut remaining = requested - overflow;
+        let remaining = requested - overflow;
+        let readable = write
+            .saturating_sub(cursor)
+            .min(self.capacity)
+            .min(remaining);
 
-        // Timeline available after applying overflow; bounded by ring capacity.
-        let available_timeline = write.saturating_sub(cursor).min(self.capacity);
-        let readable = available_timeline.min(remaining);
+        RingSegments {
+            ring: self,
+            cursor,
+            overflow,
+            readable,
+            underflow: if emit_underflow { remaining - readable } else { 0 },
+            consumed: 0,
+        }
+    }
 
+    // Search the logical timeline, merging gaps across the bitmap boundary.
+    fn search_gap_abs(&self, start_abs: usize, len: usize) -> Option<(usize, usize)> {
         let gaps = unsafe { &mut *self.gaps.get() };
-        let ring = unsafe { (&*self.ring.get()).as_slice() };
         let cap = self.capacity;
+        let start = self.logical_to_ring_index(start_abs);
+        let first_len = len.min(cap - start);
 
-        // Search gap in logical timeline [start_abs, start_abs + len), handling wrap across bitmap boundary.
-        let mut search_gap_abs = |start_abs: usize, len: usize| -> Option<(usize, usize)> {
-            if len == 0 {
-                return None;
-            }
-
-            let start = self.logical_to_ring_index(start_abs);
-            let first_len = len.min(cap - start);
-
-            if let Some((gap_start_mod, mut gap_len)) = gaps.search_next_gap(start, first_len) {
-                let abs_start = start_abs + (gap_start_mod - start);
-
-                // Merge contiguous run if gap starts near end and continues at bitmap index 0.
-                if gap_start_mod + gap_len == cap
-                    && len > first_len
-                    && let Some((gap2_start, gap2_len)) = gaps.search_next_gap(0, len - first_len)
-                    && gap2_start == 0
-                {
-                    gap_len += gap2_len;
-                }
-
-                return Some((abs_start, gap_len));
-            }
-
-            if len > first_len
-                && let Some((gap_start_mod, gap_len)) = gaps.search_next_gap(0, len - first_len)
+        if let Some((gap_start, mut gap_len)) = gaps.search_next_gap(start, first_len) {
+            let abs_start = start_abs + (gap_start - start);
+            if gap_start + gap_len == cap
+                && len > first_len
+                && let Some((next_start, next_len)) = gaps.search_next_gap(0, len - first_len)
+                && next_start == 0
             {
-                let abs_start = start_abs + first_len + gap_start_mod;
-                return Some((abs_start, gap_len));
+                gap_len += next_len;
             }
-
-            None
-        };
-
-        let mut processed = 0usize;
-        while processed < readable {
-            let span_len = readable - processed;
-            let abs = cursor + processed;
-
-            if let Some((gap_start, gap_len)) = search_gap_abs(abs, span_len) {
-                if gap_start > abs {
-                    let data_len = gap_start - abs;
-                    let head = self.logical_to_ring_index(abs);
-                    emit(RingSegment::Data(&ring[head..head + data_len]));
-
-                    processed += data_len;
-                    remaining -= data_len;
-                    continue;
-                }
-
-                let take = gap_len.min(span_len);
-                emit(RingSegment::Gap(take));
-                processed += take;
-                remaining -= take;
-            } else {
-                let data_len = span_len;
-                let head = self.logical_to_ring_index(abs);
-                emit(RingSegment::Data(&ring[head..head + data_len]));
-
-                processed += data_len;
-                remaining -= data_len;
-            }
+            return Some((abs_start, gap_len));
         }
 
-        // Everything that remains is a true underflow.
-        if remaining > 0 && emit_underflow {
-            emit(RingSegment::Underflow(remaining));
+        if len > first_len
+            && let Some((gap_start, gap_len)) = gaps.search_next_gap(0, len - first_len)
+        {
+            return Some((start_abs + first_len + gap_start, gap_len));
         }
-
-        let advance = overflow + processed + if emit_underflow { remaining } else { 0 };
-
-        if advance > 0 {
-            self.read_commit(advance);
-        }
+        None
     }
 
     pub fn advance_timeline(&self, size: usize) {
@@ -702,6 +724,60 @@ mod tests {
         let mut segs = Vec::new();
         rb.read_segments(requested, false, |seg| segs.push(seg));
         segs
+    }
+
+    #[test]
+    fn test_iterator_early_drop_commits_only_yielded_segments() {
+        let rb = RingBuffer::<i16>::new_unsplit(8);
+        rb.write(&[1, 2]);
+        rb.advance_timeline(2);
+        rb.write(&[3, 4]);
+
+        let mut segments = rb.iter_segments(8, true);
+        assert_eq!(segments.next(), Some(RingSegment::Data(&[1, 2])));
+        assert_eq!(rb.total_consumed(), 0);
+        drop(segments);
+        assert_eq!(rb.total_consumed(), 2);
+        assert_eq!(
+            rb.iter_segments(6, true).collect::<Vec<_>>(),
+            vec![RingSegment::Gap(2), RingSegment::Data(&[3, 4]), RingSegment::Underflow(2)]
+        );
+        assert_eq!(rb.total_consumed(), 8);
+    }
+
+    #[test]
+    fn test_iterator_unvisited_segments_are_not_consumed() {
+        let rb = RingBuffer::<i16>::new_unsplit(8);
+        rb.write(&[1, 2]);
+        drop(rb.iter_segments(4, true));
+        assert_eq!(rb.total_consumed(), 0);
+        assert_eq!(rb.iter_segments(0, true).next(), None);
+        assert_eq!(rb.total_consumed(), 0);
+    }
+
+    #[test]
+    fn test_iterator_snapshot_stays_exhausted_after_write() {
+        let rb = RingBuffer::<i16>::new_unsplit(8);
+        rb.write(&[1, 2]);
+        let mut segments = rb.iter_segments(4, false);
+        assert_eq!(segments.next(), Some(RingSegment::Data(&[1, 2])));
+        assert_eq!(segments.next(), None);
+        rb.write(&[3, 4]);
+        assert_eq!(segments.next(), None);
+        assert_eq!(segments.size_hint(), (0, Some(0)));
+        drop(segments);
+        assert_eq!(rb.total_consumed(), 2);
+        assert_eq!(collect_segments(&rb, 2), vec![RingSegment::Data(&[3, 4])]);
+    }
+
+    #[test]
+    fn test_consumer_segments_iterator() {
+        let (mut producer, consumer) = RingBuffer::<i16>::spsc(8);
+        producer.write(&[1, 2]);
+        assert_eq!(
+            consumer.iter_segments(4, true).collect::<Vec<_>>(),
+            vec![RingSegment::Data(&[1, 2]), RingSegment::Underflow(2)]
+        );
     }
 
     #[test]
