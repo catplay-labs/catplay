@@ -58,7 +58,6 @@ pub struct ProdGadget {
     last_tx: Arc<Mutex<Option<ProdGadgetSession>>>,
     accepting_phone: Arc<AtomicBool>,
     car_task: Option<AbortOnDropHandle<()>>,
-    car_restart_after: Option<Instant>,
     burst_wakeups: bool,
 }
 
@@ -138,7 +137,6 @@ impl ProdGadget {
                 last_tx: Default::default(),
                 accepting_phone: Arc::new(AtomicBool::new(false)),
                 car_task: None,
-                car_restart_after: None,
                 burst_wakeups: false,
             },
             Ok(ProdGadgetState::Initial),
@@ -157,12 +155,10 @@ impl ProdGadget {
             let _ = task.await;
         }
         self.pending_transmitter.lock().await.take();
-        if let Some(mut tx) = self.tx.take() {
-            tx.shutdown().await;
+        if let Some(tx) = self.tx.as_mut() {
+            tx.child_mut().restart_session().await;
         }
-        // Give the HU time to observe the logical USB disconnect.
-        self.car_restart_after = Some(Instant::now() + Duration::from_secs(1));
-        info!("Car session released; rebuilding USB connection before phone invitation");
+        info!("Car session released; renewing radio session without USB disconnect");
     }
 }
 
@@ -331,13 +327,6 @@ impl Reconcilable for ProdGadget {
         }
 
         if self.tx.is_none() {
-            if self
-                .car_restart_after
-                .is_some_and(|deadline| Instant::now() < deadline)
-            {
-                return LocalState::WaitingForCar.into();
-            }
-            self.car_restart_after = None;
             let gadget = CarPlayUsbClientGadget::new(
                 "default",
                 "aa:bb:cc:dd:ee:ff",
