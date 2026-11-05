@@ -16,6 +16,7 @@ use catplay_carplay_tx_gadget::client::{CarPlayUsbClientGadget, CarPlayUsbClient
 use catplay_hap::HomekitStorageRef;
 use catplay_iap2_usb::GadgetError;
 use catplay_mfi::MfiDeficeRef;
+use catplay_util::handover_trace::{self as trace, Stage};
 use catplay_util::{
     AbortOnDropHandle, AsyncShutdown, EventReconciler, EventSleeper, EventToken, Reconcilable, Reconciler, deadline_after, event_select,
     mpsc,
@@ -58,6 +59,8 @@ pub struct ProdGadget {
     last_tx: Arc<Mutex<Option<ProdGadgetSession>>>,
     accepting_phone: Arc<AtomicBool>,
     car_task: Option<AbortOnDropHandle<()>>,
+    trace_heartbeat: Option<AbortOnDropHandle<()>>,
+    trace_initialized: bool,
     burst_wakeups: bool,
 }
 
@@ -120,6 +123,7 @@ impl ProdGadget {
             .as_ref()
             .is_some_and(|car| !car.proxy_tx.is_closed())
         {
+            trace::arm();
             if let Some(rx) = self.rx.as_mut() {
                 rx.child_mut().request_next_device();
             }
@@ -137,6 +141,8 @@ impl ProdGadget {
                 last_tx: Default::default(),
                 accepting_phone: Arc::new(AtomicBool::new(false)),
                 car_task: None,
+                trace_heartbeat: None,
+                trace_initialized: false,
                 burst_wakeups: false,
             },
             Ok(ProdGadgetState::Initial),
@@ -144,6 +150,7 @@ impl ProdGadget {
     }
 
     async fn restart_car_session(&mut self) {
+        trace::mark(Stage::ParentRadioRestart);
         // Reject new receivers before tearing down the worker they would use.
         self.accepting_phone.store(false, Ordering::Release);
         self.last_tx.lock().unwrap().take();
@@ -164,6 +171,8 @@ impl ProdGadget {
 
 impl AsyncShutdown for ProdGadget {
     async fn shutdown(&mut self) {
+        trace::stop();
+        self.trace_heartbeat.take();
         self.accepting_phone.store(false, Ordering::Release);
         self.last_tx.lock().unwrap().take();
         if let Some(task) = self.car_task.take() {
@@ -191,6 +200,7 @@ pub struct ProdGadgetSession {
 
 impl EventSleeper for ProdGadget {
     async fn sleep(&mut self) -> Option<EventToken> {
+        trace::mark(Stage::SleepLock);
         let mut pending_transmitter = self.pending_transmitter.lock().await;
         let fallback = if self.burst_wakeups {
             Duration::from_millis(50)
@@ -198,13 +208,16 @@ impl EventSleeper for ProdGadget {
             Duration::from_millis(500)
         };
 
-        event_select!(
+        trace::mark(Stage::SleepSelect);
+        let event = event_select!(
             pending_transmitter.as_mut(),
             self.tx,
             // self.rx_usb,
             self.rx,
             deadline_after(fallback)
-        )
+        );
+        trace::mark(Stage::SleepReady);
+        event
     }
 }
 
@@ -235,6 +248,18 @@ impl Reconcilable for ProdGadget {
     }
 
     async fn render(&mut self, prev: LocalStatus, update: Instant) -> LocalStatus {
+        if !self.trace_initialized {
+            self.trace_initialized = true;
+            if trace::start_from_env() {
+                self.trace_heartbeat = Some(catplay_util::spawn(async {
+                    while trace::enabled() {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        trace::runtime_tick();
+                    }
+                }));
+            }
+        }
+        trace::parent_tick();
         let stale_car = self
             .last_tx
             .lock()
@@ -250,7 +275,9 @@ impl Reconcilable for ProdGadget {
             self.restart_car_session().await;
         }
         // Resolve radio health before allowing a phone to start connecting.
+        trace::mark(Stage::ParentTx);
         let _ = self.tx.reconcile().await;
+        trace::mark(Stage::ParentAfterTx);
         if self.last_tx.lock().unwrap().is_some()
             && !self
                 .tx
@@ -261,12 +288,15 @@ impl Reconcilable for ProdGadget {
             self.restart_car_session().await;
         }
         if let Some(rx) = self.rx.as_mut() {
+            trace::mark(Stage::ParentAdmission);
             let ready = self.last_tx.lock().unwrap().is_some();
             rx.child_mut().set_invites_blocked(!ready);
             self.accepting_phone
                 .store(ready && rx.child_mut().current_phone_matches_switch_target(), Ordering::Release);
         }
+        trace::mark(Stage::ParentRx);
         let _ = self.rx.reconcile().await;
+        trace::mark(Stage::ParentAfterRx);
         // let _ = self.rx_usb.reconcile().await;
         if self
             .rx
@@ -337,6 +367,7 @@ impl Reconcilable for ProdGadget {
             .map_err(|err| LocalError::FailedToSetupUsbClient(err))?;
             self.tx.replace(gadget);
         }
+        trace::mark(Stage::ParentPendingLock);
         let mut pending_transmitter = self.pending_transmitter.lock().await;
 
         // Transmitter reached error status after successful handshake, but before being picked up by the receiver.
@@ -355,6 +386,7 @@ impl Reconcilable for ProdGadget {
             let proxy_chan = mpsc::unbounded();
             let car_state = ProdGadgetSession { proxy_tx: proxy_chan.0 };
 
+            trace::mark(Stage::ParentManagerNew);
             let transmitter2 = CarManager::new(transmitter, proxy_chan.1, self.cfg.persist_dir.clone())
                 .await
                 .map_err(LocalError::CarSessionStart)?;
@@ -369,6 +401,7 @@ impl Reconcilable for ProdGadget {
             Ordering::Release,
         );
 
+        trace::mark(Stage::ParentReturn);
         match _status {
             ProdGadgetState::Initial => ProdGadgetState::WaitingForUdc.into(),
             ProdGadgetState::WaitingForUdc => ProdGadgetState::WaitingForUsbTransmitterGadget.into(),

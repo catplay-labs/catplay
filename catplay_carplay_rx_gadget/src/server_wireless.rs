@@ -23,6 +23,7 @@ use macaddr::MacAddr6;
 mod device_cycle;
 
 use crate::{CarPlayServerSession, CarPlaySessionIdentity};
+use catplay_util::handover_trace::{self as trace, Stage};
 
 /// CarPlay HeadUnit (Wireless)
 pub struct CarPlayWirelessGadget<T: AirPlayReceiverSink> {
@@ -174,9 +175,13 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
     const RESTART_DELAY: Duration = Duration::from_millis(1000);
 
     pub fn get_bt_last_connect(&mut self) -> Option<MacAddr6> {
+        trace::mark(Stage::BluetoothRead);
         if let Some(bt) = self.bluetooth.as_mut() {
-            return bt.get_last_connected();
+            let peer = bt.get_last_connected();
+            trace::mark(Stage::BluetoothReadDone);
+            return peer;
         }
+        trace::mark(Stage::BluetoothReadDone);
         None
     }
 
@@ -233,7 +238,10 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
     }
 
     fn find_active_session(&mut self) -> Option<AirPlayReceiverHandleRef> {
-        if let Some(session) = self.shared.borrow()
+        trace::mark(Stage::ReceiverBorrow);
+        let session = self.shared.borrow();
+        trace::mark(Stage::ReceiverBorrowDone);
+        if let Some(session) = session
             && self.iface == session.iface()
         {
             return Some(session);
@@ -435,6 +443,7 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
     }
 
     async fn render(&mut self, prev: LocalStatus, update: Instant) -> LocalStatus {
+        trace::mark(Stage::WirelessRender);
         let Ok(_status) = prev.as_ref() else {
             let err = prev.err().unwrap();
 
@@ -445,9 +454,11 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
             return err.into();
         };
 
+        trace::mark(Stage::WirelessCache);
         self.load_bt_last_connect();
         self.sync_bt_last_connect();
 
+        trace::mark(Stage::WirelessSwitch);
         if self.server.is_some() && self.bluetooth.is_some() {
             self.reconcile_device_switch().await;
         }
