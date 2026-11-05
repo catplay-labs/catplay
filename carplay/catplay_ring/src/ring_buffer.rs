@@ -115,6 +115,7 @@ unsafe impl<T: Copy + Default> Sync for RingBuffer<T> {}
 ///
 /// Dropping the iterator commits only the segments it yielded, using a single
 /// atomic update. Unvisited segments remain unread, including after `break`.
+/// Use [`RingSegments::drop_without_commit`] to leave all yielded segments unread.
 #[must_use = "segments are consumed only when the iterator is advanced"]
 pub struct RingSegments<'a, T: Copy + Default> {
     ring: &'a RingBuffer<T>,
@@ -123,6 +124,16 @@ pub struct RingSegments<'a, T: Copy + Default> {
     readable: usize,
     underflow: usize,
     consumed: usize,
+}
+
+impl<T: Copy + Default> RingSegments<'_, T> {
+    /// Drops the iterator without advancing the ring's read position.
+    ///
+    /// All segments yielded by this iterator remain unread. This does not undo
+    /// any processing or other side effects performed by the caller.
+    pub fn drop_without_commit(mut self) {
+        self.consumed = 0;
+    }
 }
 
 impl<'a, T: Copy + Default> Iterator for RingSegments<'a, T> {
@@ -320,6 +331,11 @@ impl<T: Copy + Default> RingProducer<T> {
         self.0.write_default(repeat);
     }
 
+    /// Advances the timeline without writing samples, producing gap segments.
+    pub fn advance_timeline(&mut self, size: usize) {
+        self.0.advance_timeline(size);
+    }
+
     pub fn writable_slice(&self) -> &mut [T] {
         self.0.writable_slice()
     }
@@ -340,10 +356,6 @@ impl<T: Copy + Default> RingConsumer<T> {
 
     pub fn read(&mut self, out: &mut [T]) -> Result<(), XRunReport> {
         self.0.read(out)
-    }
-
-    pub fn readable_slice(&self) -> (usize, &[T]) {
-        self.0.readable_slice()
     }
 
     pub fn read_commit(&self, n: usize) {
@@ -495,31 +507,6 @@ impl<T: Copy + Default> RingBuffer<T> {
         let written_phys = repeat.min(dst.len());
         dst[..written_phys].fill(T::default());
         self.write_commit_advance(written_phys, repeat);
-    }
-
-    pub fn readable_slice(&self) -> (usize, &[T]) {
-        let read = self.read_head.load(Ordering::Relaxed);
-        let write = self.write_head.load(Ordering::Acquire);
-
-        let lost = write.saturating_sub(self.capacity).saturating_sub(read);
-
-        let overflow = lost;
-
-        let available = write.saturating_sub(read + overflow);
-
-        if available == 0 {
-            return (overflow, &[]);
-        }
-
-        let to_read = available.min(self.capacity);
-
-        let head = self.logical_to_ring_index(read + overflow);
-
-        unsafe {
-            let ring = (&*self.ring.get()).as_slice();
-            let slice = &ring[head..head + to_read];
-            (overflow, slice)
-        }
     }
 
     pub fn read(&self, out: &mut [T]) -> Result<(), XRunReport> {
@@ -753,6 +740,31 @@ mod tests {
         assert_eq!(rb.total_consumed(), 0);
         assert_eq!(rb.iter_segments(0, true).next(), None);
         assert_eq!(rb.total_consumed(), 0);
+    }
+
+    #[test]
+    fn test_iterator_drop_without_commit_leaves_all_yielded_segments_unread() {
+        let rb = RingBuffer::<i16>::new_unsplit(8);
+        rb.write(&[1, 2]);
+        rb.advance_timeline(2);
+        rb.write(&[3, 4]);
+
+        let mut segments = rb.iter_segments(8, true);
+        assert_eq!(segments.next(), Some(RingSegment::Data(&[1, 2])));
+        assert_eq!(segments.next(), Some(RingSegment::Gap(2)));
+        segments.drop_without_commit();
+
+        assert_eq!(rb.total_consumed(), 0);
+        assert_eq!(
+            rb.iter_segments(8, true).collect::<Vec<_>>(),
+            vec![
+                RingSegment::Data(&[1, 2]),
+                RingSegment::Gap(2),
+                RingSegment::Data(&[3, 4]),
+                RingSegment::Underflow(2),
+            ]
+        );
+        assert_eq!(rb.total_consumed(), 8);
     }
 
     #[test]
