@@ -6,6 +6,7 @@ use std::{
 };
 
 use super::{RtpPacketMeta, RtpTxPacer};
+use catplay_ring::RingSegment;
 use catplay_util::ModSeq;
 use log::{trace, warn};
 
@@ -205,48 +206,60 @@ impl<T: AudioEncoder> RtpRecorder<T> {
         // and `drop_packets_older_than_ts` here, but it's a an unlikely scenario.
 
         while !self.empty_buffers.is_empty() {
-            let (overflow, readable) = self.ring.readable_slice();
-            if overflow > 0 {
-                warn!("Overflow during recording; skipping {overflow} samples");
-                self.rewind_rounding(overflow);
-                continue;
-            }
-
-            let mut samples_to_commit = 0;
-
-            let packets = (readable.len() / packet_samples).min(self.empty_buffers.len());
-            for frames in readable[..packets * packet_samples].chunks_exact(packet_samples) {
-                let buffer = self.empty_buffers.front_mut().unwrap();
-                if let Err(err) = Self::prepare_packet(
-                    &mut self.cipher,
-                    &mut self.encoder,
-                    frames,
-                    buffer,
-                    self.stream_type as _,
-                    ModSeq(self.ts as u32),
-                    self.seq,
-                ) {
-                    self.ring.read_commit(samples_to_commit);
-                    return Err(err);
+            // One transaction per packet: incomplete input stays unread, while
+            // a failed encode consumes the packet and advances its timestamp.
+            let mut segments = self.ring.iter_segments(packet_samples, false);
+            let frames = match segments.next() {
+                Some(RingSegment::Data(frames)) if frames.len() == packet_samples => frames,
+                Some(RingSegment::Data(_)) => {
+                    // A short Data segment either ends at the current write head
+                    // (wait for more samples), or at a gap (skip this packet).
+                    let followed_by_gap = matches!(segments.next(), Some(RingSegment::Gap(_)));
+                    segments.drop_without_commit();
+                    if followed_by_gap {
+                        self.rewind_rounding(packet_samples);
+                        continue;
+                    }
+                    break;
                 }
+                Some(RingSegment::Gap(n)) | Some(RingSegment::Overflow(n)) => {
+                    warn!("Missing audio during recording; skipping at least {n} samples");
+                    segments.drop_without_commit();
+                    self.rewind_rounding(n);
+                    continue;
+                }
+                None => {
+                    break;
+                }
+                Some(RingSegment::Underflow(_)) => unreachable!("underflow emission is disabled"),
+            };
 
-                let meta = RtpPacketMeta {
-                    first_ts: self.ts,
-                    end_ts: self.ts + ts_jump,
-                };
+            let buffer = self.empty_buffers.front_mut().unwrap();
+            if let Err(err) = Self::prepare_packet(
+                &mut self.cipher,
+                &mut self.encoder,
+                frames,
+                buffer,
+                self.stream_type as _,
+                ModSeq(self.ts as u32),
+                self.seq,
+            ) {
+                drop(segments);
                 self.ts += ts_jump;
-                self.seq = self.seq + 1;
-                samples_to_commit += packet_samples;
-                self.pending_transmit.push_back(EncodedPacket {
-                    buffer: self.empty_buffers.pop_front().unwrap(),
-                    meta,
-                });
+                return Err(err);
             }
+            drop(segments);
 
-            self.ring.read_commit(samples_to_commit);
-            if packets == 0 {
-                break;
-            }
+            let meta = RtpPacketMeta {
+                first_ts: self.ts,
+                end_ts: self.ts + ts_jump,
+            };
+            self.ts += ts_jump;
+            self.seq = self.seq + 1;
+            self.pending_transmit.push_back(EncodedPacket {
+                buffer: self.empty_buffers.pop_front().unwrap(),
+                meta,
+            });
         }
 
         Ok(())
@@ -269,10 +282,18 @@ impl<T: AudioEncoder> RtpRecorder<T> {
     }
 
     fn drain_encoded(&mut self, callback: &mut dyn FnMut(&[&[u8]]) -> Result<usize, RtspError>) -> Result<Option<Instant>, RtspError> {
+        self.drain_encoded_with_clock(callback, Instant::now)
+    }
+
+    fn drain_encoded_with_clock(
+        &mut self,
+        callback: &mut dyn FnMut(&[&[u8]]) -> Result<usize, RtspError>,
+        mut clock: impl FnMut() -> Instant,
+    ) -> Result<Option<Instant>, RtspError> {
         const UDP_BATCH_SIZE: usize = 16;
 
         while !self.pending_transmit.is_empty() {
-            let now = Instant::now();
+            let now = clock();
             let decision = self
                 .pacer
                 .inspect(now, self.pending_transmit.iter().map(|packet| packet.meta), UDP_BATCH_SIZE);
@@ -308,7 +329,7 @@ impl<T: AudioEncoder> RtpRecorder<T> {
             // The socket peer has no writable notification. Retry without losing
             // the unsent suffix or spinning when the socket is backpressured.
             if sent < decision.permits {
-                return Ok(Some(Instant::now() + self.pacer.udp_interval()));
+                return Ok(Some(clock() + self.pacer.udp_interval()));
             }
         }
         Ok(None)
@@ -353,6 +374,106 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn incomplete_packet_stays_unread_until_more_samples_arrive() {
+        let (mut recorder, mut producer) = recorder();
+        producer.write(&vec![1; 1000]);
+        recorder.encode_all().unwrap();
+        assert_eq!(recorder.ring.stat().consumed, 960);
+        assert_eq!(recorder.pending_transmit.len(), 1);
+        assert_eq!(recorder.ts, 480);
+
+        recorder.encode_all().unwrap();
+        assert_eq!(recorder.ring.stat().consumed, 960);
+        producer.write(&vec![2; 920]);
+        recorder.encode_all().unwrap();
+        assert_eq!(recorder.ring.stat().consumed, 1920);
+        assert_eq!(recorder.pending_transmit.len(), 2);
+        assert_eq!(recorder.ts, 960);
+    }
+
+    #[test]
+    fn gaps_skip_whole_packets_without_encoding_missing_samples() {
+        // Gap at the read head, inside a packet, and spanning several packets.
+        for (prefix, gap, skipped_packets) in [(0, 100, 1), (100, 100, 1), (100, 2000, 3)] {
+            let (mut recorder, mut producer) = recorder();
+            producer.write(&vec![1; prefix]);
+            producer.advance_timeline(gap);
+            producer.write(&vec![2; (skipped_packets + 1) * 960 - prefix - gap]);
+
+            recorder.encode_all().unwrap();
+            assert_eq!(recorder.ring.stat().consumed, (skipped_packets + 1) * 960);
+            assert_eq!(recorder.pending_transmit.len(), 1);
+            assert_eq!(recorder.seq, ModSeq(1));
+            assert_eq!(recorder.pending_transmit[0].meta.first_ts, skipped_packets as u64 * 480);
+            assert_eq!(recorder.ts, (skipped_packets + 1) as u64 * 480);
+        }
+    }
+
+    #[test]
+    fn overflow_still_rounds_forward_to_a_packet_boundary() {
+        let (mut recorder, mut producer) = recorder();
+        let capacity = producer.capacity();
+        producer.write_default(capacity + 1);
+        recorder.encode_all().unwrap();
+
+        assert_eq!(recorder.pending_transmit.len(), 16);
+        assert_eq!(recorder.pending_transmit[0].meta.first_ts, 480);
+        assert_eq!(recorder.ring.stat().consumed, 17 * 960);
+        assert_eq!(recorder.ts, 17 * 480);
+    }
+
+    struct FailingEncoder {
+        calls: usize,
+    }
+
+    impl AudioEncoder for FailingEncoder {
+        type Error = std::io::Error;
+        type Sample = i16;
+
+        fn input_type(&self) -> AudioStreamBasicDescription {
+            TestEncoder.input_type()
+        }
+
+        fn output_type(&self) -> AudioStreamBasicDescription {
+            self.input_type()
+        }
+
+        fn encode(&mut self, samples: &[i16], output: &mut [u8]) -> Result<(usize, usize), Self::Error> {
+            self.calls += 1;
+            if self.calls == 2 {
+                return Err(std::io::Error::other("test encoder failure"));
+            }
+            output[0] = 42;
+            Ok((1, samples.len()))
+        }
+    }
+
+    #[test]
+    fn failed_encode_consumes_current_packet_and_preserves_previous_packet() {
+        let (mut recorder, mut producer) = RtpRecorder::new(
+            FailingEncoder { calls: 0 },
+            StreamType::MainAudio,
+            250,
+            NonZeroUsize::new(960).unwrap(),
+            NonZeroUsize::new(2).unwrap(),
+            RtpCipher::None,
+        );
+        producer.write(&vec![1; 2880]);
+        assert!(matches!(recorder.encode_all(), Err(RtpRecorderError::Codec(_))));
+        assert_eq!(recorder.ring.stat().consumed, 1920);
+        assert_eq!(recorder.pending_transmit.len(), 1);
+        assert_eq!(recorder.ts, 960);
+        assert_eq!(recorder.seq, ModSeq(1));
+
+        recorder.encode_all().unwrap();
+        assert_eq!(recorder.ring.stat().consumed, 2880);
+        assert_eq!(recorder.pending_transmit.len(), 2);
+        assert_eq!(recorder.pending_transmit[1].meta.first_ts, 960);
+        assert_eq!(recorder.ts, 1440);
+        assert_eq!(recorder.seq, ModSeq(2));
+    }
+
+    #[test]
     fn udp_budget_sustains_realtime_across_packet_sizes_and_sample_rates() {
         // AAC-LC, AAC-ELD, Opus, PCM and packets requiring more than 1000 pps.
         for frames in [1024, 512, 480, 240, 120, 352, 16, 1] {
@@ -382,17 +503,43 @@ pub(super) mod tests {
     fn partial_send_commits_only_sent_prefix() {
         let (mut recorder, mut producer) = recorder();
         producer.write(&vec![0; 960 * 4]);
+        recorder.encode_all().unwrap();
+        let start = Instant::now();
+
+        // Negotiated latency (250 ms) grants no write-ahead credit to MainAudio:
+        // only the first packet is initially permitted.
         let wake_at = recorder
-            .flush(&mut |batch| {
-                assert_eq!(batch.len(), 4);
-                Ok(1)
-            })
+            .drain_encoded_with_clock(
+                &mut |batch| {
+                    assert_eq!(batch.len(), 1);
+                    Ok(1)
+                },
+                || start,
+            )
             .unwrap();
-        assert!(wake_at.is_some());
+        assert_eq!(wake_at, Some(start + Duration::from_millis(10)));
         assert_eq!(recorder.pending_transmit.len(), 3);
         assert_eq!(recorder.pacer.last_end_ts(), Some(480));
         assert_eq!(recorder.pending_transmit.front().unwrap().meta.first_ts, 480);
         assert_eq!(recorder.empty_buffers.len(), 13);
+
+        // Once media time catches up, all three remaining packets are eligible.
+        // A partial socket send must commit only the first of those three.
+        let now = start + Duration::from_millis(30);
+        let wake_at = recorder
+            .drain_encoded_with_clock(
+                &mut |batch| {
+                    assert_eq!(batch.len(), 3);
+                    Ok(1)
+                },
+                || now,
+            )
+            .unwrap();
+        assert_eq!(wake_at, Some(now + recorder.pacer.udp_interval()));
+        assert_eq!(recorder.pending_transmit.len(), 2);
+        assert_eq!(recorder.pacer.last_end_ts(), Some(960));
+        assert_eq!(recorder.pending_transmit.front().unwrap().meta.first_ts, 960);
+        assert_eq!(recorder.empty_buffers.len(), 14);
     }
 
     #[test]
@@ -422,19 +569,57 @@ pub(super) mod tests {
         let (mut recorder, mut producer) = recorder();
         recorder.ts = u32::MAX as u64 - 239;
         producer.write(&vec![0; 960 * 2]);
-        recorder
-            .flush(&mut |batch| {
-                let first = RtpHeader::from_buf(batch[0]).unwrap();
-                let second = RtpHeader::from_buf(batch[1]).unwrap();
-                assert_eq!(first.timestamp, u32::MAX - 239);
-                assert_eq!(second.timestamp, 240);
-                Ok(batch.len())
-            })
+        recorder.encode_all().unwrap();
+        let start = Instant::now();
+        let wake_at = recorder
+            .drain_encoded_with_clock(
+                &mut |batch| {
+                    assert_eq!(batch.len(), 1);
+                    assert_eq!(RtpHeader::from_buf(batch[0]).unwrap().timestamp, u32::MAX - 239);
+                    Ok(1)
+                },
+                || start,
+            )
             .unwrap();
+        assert_eq!(wake_at, Some(start + Duration::from_millis(10)));
+        assert!(
+            recorder
+                .drain_encoded_with_clock(
+                    &mut |batch| {
+                        assert_eq!(batch.len(), 1);
+                        assert_eq!(RtpHeader::from_buf(batch[0]).unwrap().timestamp, 240);
+                        Ok(1)
+                    },
+                    || start + Duration::from_millis(10),
+                )
+                .unwrap()
+                .is_none()
+        );
         let previous = recorder.pacer.last_end_ts().unwrap();
         recorder.rewind_rounding(1);
         producer.write(&vec![0; 960 * 2]);
-        recorder.flush(&mut |batch| Ok(batch.len())).unwrap();
+        recorder.encode_all().unwrap();
+        let wake_at = recorder
+            .drain_encoded_with_clock(
+                &mut |_| panic!("rewinding the timestamp must not bypass media pacing"),
+                || start + Duration::from_millis(10),
+            )
+            .unwrap();
+        assert_eq!(wake_at, Some(start + Duration::from_millis(30)));
+        assert_eq!(recorder.pacer.last_end_ts(), Some(previous));
+        assert!(
+            recorder
+                .drain_encoded_with_clock(
+                    &mut |batch| {
+                        assert_eq!(batch.len(), 1);
+                        assert_eq!(RtpHeader::from_buf(batch[0]).unwrap().timestamp, 1200);
+                        Ok(1)
+                    },
+                    || wake_at.unwrap(),
+                )
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(recorder.pacer.last_end_ts(), Some(previous + 960));
     }
 }
