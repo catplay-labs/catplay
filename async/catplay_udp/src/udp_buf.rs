@@ -24,7 +24,7 @@ impl<const N: usize, const PAD: usize> Default for AlignedOffsetBuf<N, PAD> {
 #[allow(clippy::missing_safety_doc)]
 impl<const N: usize, const PAD: usize> AlignedOffsetBuf<N, PAD> {
     #[inline(always)]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             _pad: MaybeUninit::uninit(),
             buf: MaybeUninit::uninit(),
@@ -33,7 +33,7 @@ impl<const N: usize, const PAD: usize> AlignedOffsetBuf<N, PAD> {
     }
 
     #[inline(always)]
-    pub fn zeroed() -> Self {
+    pub const fn zeroed() -> Self {
         Self {
             _pad: MaybeUninit::zeroed(),
             buf: MaybeUninit::zeroed(),
@@ -42,22 +42,22 @@ impl<const N: usize, const PAD: usize> AlignedOffsetBuf<N, PAD> {
     }
 
     #[inline(always)]
-    pub fn written(&self) -> usize {
+    pub const fn written(&self) -> usize {
         self.written
     }
 
     #[inline(always)]
-    pub fn max_size(&self) -> usize {
+    pub const fn max_size(&self) -> usize {
         N
     }
 
     #[inline(always)]
-    pub fn as_ptr(&self) -> *const u8 {
+    pub const fn as_ptr(&self) -> *const u8 {
         self.buf.as_ptr() as *const u8
     }
 
     #[inline(always)]
-    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+    pub const fn as_mut_ptr(&mut self) -> *mut u8 {
         self.buf.as_mut_ptr() as *mut u8
     }
 
@@ -69,12 +69,12 @@ impl<const N: usize, const PAD: usize> AlignedOffsetBuf<N, PAD> {
     }
 
     #[inline(always)]
-    pub unsafe fn uninit_slice(&self) -> &[u8] {
+    pub const unsafe fn uninit_slice(&self) -> &[u8] {
         unsafe { self.buf.assume_init_ref() }
     }
 
     #[inline(always)]
-    pub unsafe fn uninit_slice_mut(&mut self) -> &mut [u8] {
+    pub const unsafe fn uninit_slice_mut(&mut self) -> &mut [u8] {
         unsafe { self.buf.assume_init_mut() }
     }
 
@@ -99,31 +99,27 @@ impl<const N: usize, const PAD: usize> AlignedOffsetBuf<N, PAD> {
     }
 
     #[inline(always)]
-    pub unsafe fn build_recv_slices<'a, const BATCH: usize>(batch: &'a mut [Self; BATCH]) -> [&'a mut [u8]; BATCH] {
-        unsafe { Self::build_recv_slices_from_slice(batch) }
+    pub unsafe fn build_recv_slices<'a, const BATCH: usize>(batch: impl IntoIterator<Item = &'a mut Self>) -> [&'a mut [u8]; BATCH] {
+        let mut tmp: [&'a mut [u8]; BATCH] = core::array::from_fn(|_| &mut [][..]);
+        for (slot, b) in tmp.iter_mut().zip(batch) {
+            *slot = unsafe { b.uninit_slice_mut() };
+        }
+        tmp
     }
 
     #[inline(always)]
     pub unsafe fn build_recv_slices_from_slice<'a, const BATCH: usize>(batch: &'a mut [Self]) -> [&'a mut [u8]; BATCH] {
         assert_eq!(batch.len(), BATCH);
-        let mut tmp: [Option<&'a mut [u8]>; BATCH] = [(); BATCH].map(|_| None);
-        for (slot, b) in tmp.iter_mut().zip(batch.iter_mut()) {
-            unsafe {
-                slot.replace(b.uninit_slice_mut());
-            }
-        }
-        tmp.map(|o| o.unwrap())
+        unsafe { Self::build_recv_slices(batch) }
     }
 
     #[inline(always)]
-    pub fn build_send_slices<'a, const BATCH: usize>(batch: &'a [Self; BATCH]) -> [&'a [u8]; BATCH] {
-        let mut tmp: [Option<&'a [u8]>; BATCH] = [(); BATCH].map(|_| None);
-        for (slot, b) in tmp.iter_mut().zip(batch.iter()) {
-            unsafe {
-                slot.replace(&b.buf.assume_init_ref()[..b.written]);
-            }
+    pub fn build_send_slices<'a, const BATCH: usize>(batch: impl IntoIterator<Item = &'a Self>) -> [&'a [u8]; BATCH] {
+        let mut tmp: [&'a [u8]; BATCH] = [&[]; BATCH];
+        for (slot, b) in tmp.iter_mut().zip(batch) {
+            *slot = b.as_ref();
         }
-        tmp.map(|o| o.unwrap())
+        tmp
     }
 }
 
@@ -238,9 +234,22 @@ mod tests {
 
         let _batch1 = CryptoBuf::<1500>::new_batch::<16>();
         let mut _batch2 = CryptoBuf::<1500>::new_batch_zeroed::<16>();
-        let _bufs = unsafe { AlignedOffsetBuf::build_recv_slices(&mut _batch2) };
+        let _bufs = unsafe { AlignedOffsetBuf::build_recv_slices::<16>(&mut _batch2) };
         assert_eq!(_bufs[0].len(), 1500);
         assert_eq!(_bufs.len(), 16);
+    }
+
+    #[test]
+    fn test_batch_recv_partial_iterator() {
+        type CryptoBuf = AlignedOffsetBuf<1500, { calc_buffer_pad(12) }>;
+
+        let mut batch = CryptoBuf::new_batch_zeroed::<2>();
+        let slices = unsafe { CryptoBuf::build_recv_slices::<16>(batch.iter_mut().take(1)) };
+        assert_eq!(slices[0].len(), 1500);
+        assert!(slices[1..].iter().all(|slice| slice.is_empty()));
+        slices[0][123] = 33;
+        unsafe { batch[0].assume_written(124) };
+        assert_eq!(batch[0].as_ref()[123], 33);
     }
 
     #[test]
@@ -249,14 +258,18 @@ mod tests {
 
         let mut _batch = CryptoBuf::<1500>::new_batch::<16>();
         {
-            let _bufs = unsafe { AlignedOffsetBuf::build_recv_slices(&mut _batch) };
+            let _bufs = unsafe { AlignedOffsetBuf::build_recv_slices::<16>(&mut _batch) };
             _bufs[0][123] = 33;
         }
         unsafe { _batch[0].assume_written(124) }
         {
-            let _bufs = AlignedOffsetBuf::build_send_slices(&_batch);
+            let _bufs = AlignedOffsetBuf::build_send_slices::<16>(&_batch);
             assert_eq!(_bufs[0].len(), 124);
             assert_eq!(_bufs[0][123], 33);
         }
+        let slices = AlignedOffsetBuf::build_send_slices::<16>(_batch.iter().take(1));
+        assert_eq!(slices[0].len(), 124);
+        assert_eq!(slices[0][123], 33);
+        assert!(slices[1..].iter().all(|slice| slice.is_empty()));
     }
 }

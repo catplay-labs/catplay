@@ -155,6 +155,7 @@ impl RtpReceiver {
                 encryption,
                 stream_connection_id,
                 d.stream_type,
+                d.audio_latency_ms,
                 codec_record,
                 sink_record,
                 true,
@@ -222,7 +223,15 @@ impl RtpReceiver {
 
         encryption = Self::effective_audio_encryption(encryption, d.stream_type, false);
 
-        let mut session = RtpSessionTx::new(encryption, d.stream_connection_id, d.stream_type, recorder.0, recorder.1, false)?;
+        let mut session = RtpSessionTx::new(
+            encryption,
+            d.stream_connection_id,
+            d.stream_type,
+            self._stream.audio_latency_ms,
+            recorder.0,
+            recorder.1,
+            false,
+        )?;
         let mut rtp_remote = peer_ip;
         rtp_remote.set_port(d.data_port);
 

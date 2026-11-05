@@ -1,8 +1,8 @@
 use std::{net::SocketAddr, num::NonZero};
 
 use catplay_tokio::{UdpSession, UdpSocketPeer};
-use catplay_util::{EventSleeper, notify::Notify};
-use log::{debug, trace, warn};
+use catplay_util::{Deadline, EventSleeper, notify::Notify};
+use log::{debug, warn};
 
 use crate::{
     audio::{AudioCodec, AudioRecorderBox, codec::AudioEncoder},
@@ -20,6 +20,8 @@ pub struct RtpSessionTx<E: AudioEncoder> {
     recorder: Option<RtpRecorder<E>>,
     #[sleep]
     recorder_notify: Notify,
+    #[sleep]
+    transmit_deadline: Deadline,
     recorder_sink: Option<AudioRecorderBox<E::Sample>>,
 }
 
@@ -28,6 +30,7 @@ impl<E: AudioEncoder> RtpSessionTx<E> {
         encryption: AirPlayStreamEncryption,
         stream_connection_id: u64,
         stream_type: StreamType,
+        latency_ms: u64,
 
         codec: E,
         recoder: AudioRecorderBox<E::Sample>,
@@ -40,10 +43,16 @@ impl<E: AudioEncoder> RtpSessionTx<E> {
                 RtpCipher::ChaCha(RtpChaChaDecoder::new(shared_secret, stream_connection_id, server))
             }
         };
-        Self::new_with_cipher(cipher, stream_type, codec, recoder)
+        Self::new_with_cipher(cipher, stream_type, latency_ms, codec, recoder)
     }
 
-    fn new_with_cipher(cipher: RtpCipher, stream_type: StreamType, codec: E, mut recoder: AudioRecorderBox<E::Sample>) -> RtspResult<Self> {
+    fn new_with_cipher(
+        cipher: RtpCipher,
+        stream_type: StreamType,
+        latency_ms: u64,
+        codec: E,
+        mut recoder: AudioRecorderBox<E::Sample>,
+    ) -> RtspResult<Self> {
         const MAX_FRAMES_PER_PACKET_PCM: usize = 352;
 
         let mut samples_per_packet = (codec.output_type().frames_per_packet as usize * codec.output_type().channels() as usize)
@@ -61,7 +70,7 @@ impl<E: AudioEncoder> RtpSessionTx<E> {
 
         let encoder_wakeup = Notify::new();
         // RtpRecorder -> owns audio ring consumer side
-        let (recorder, ring) = RtpRecorder::new(codec, stream_type, samples_per_packet, frame_size_in_samples, cipher);
+        let (recorder, ring) = RtpRecorder::new(codec, stream_type, latency_ms, samples_per_packet, frame_size_in_samples, cipher);
 
         // RtpSink -> owns audio ring producer side and provides data to AudioRecorder (sink)
         let sink = {
@@ -74,6 +83,7 @@ impl<E: AudioEncoder> RtpSessionTx<E> {
         Ok(Self {
             recorder: Some(recorder),
             recorder_notify: encoder_wakeup,
+            transmit_deadline: Deadline::Never,
             recorder_sink: Some(recoder),
         })
     }
@@ -85,25 +95,16 @@ impl<E: AudioEncoder> RtpSessionTx<E> {
     }
 
     fn flush_recorder(&mut self, peer: Option<&dyn UdpSocketPeer<Self>>) -> RtspResult<()> {
-        if let Some(recorder) = self.recorder.as_mut()
-            && let Some(peer) = peer
-        {
-            let ret = recorder.drain(move |batch| {
-                let packets_prepared = batch.len();
-                if packets_prepared == 0 {
-                    return;
+        self.transmit_deadline = Deadline::Never;
+        if let (Some(recorder), Some(peer)) = (self.recorder.as_mut(), peer) {
+            match recorder.flush(&mut |batch| peer.send_multiple(batch)) {
+                Ok(wake_at) => {
+                    self.transmit_deadline = wake_at.map(Deadline::new).unwrap_or(Deadline::Never);
                 }
-
-                match peer.send_multiple(batch) {
-                    Ok(n) if n < packets_prepared => warn!("Lost some outgoing RTP packets from batch: sent {n}/{packets_prepared}"),
-                    Err(err) => warn!("Lost outgoing RTP packets due to UDP error: {err}"),
-                    _ => trace!("Sent {packets_prepared} RTP packets"),
+                Err(err) => {
+                    warn!("RTP recorder crash: {err:?}");
+                    return Err(RtspError::DisconnectNow);
                 }
-            });
-
-            if let Err(err) = ret {
-                warn!("RTP recorder crash: {err:?}");
-                return Err(RtspError::DisconnectNow);
             }
         }
         Ok(())
@@ -134,4 +135,57 @@ impl<E: AudioEncoder> UdpSession for RtpSessionTx<E> {
 
 impl<E: AudioEncoder> Drop for RtpSessionTx<E> {
     fn drop(&mut self) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::rtp_recorder::tests::{TestEncoder, recorder};
+    use super::*;
+    use std::{cell::Cell, time::Duration};
+
+    struct Peer {
+        blocked: Cell<bool>,
+        sent: Cell<usize>,
+    }
+
+    impl UdpSocketPeer<RtpSessionTx<TestEncoder>> for Peer {
+        fn send(&self, _: &[u8]) -> RtspResult<()> {
+            unreachable!()
+        }
+
+        fn send_multiple(&self, batch: &[&[u8]]) -> RtspResult<usize> {
+            if self.blocked.replace(false) {
+                return Ok(0);
+            }
+            self.sent.set(self.sent.get() + batch.len());
+            Ok(batch.len())
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pending_transmit_wakes_session_without_new_audio() {
+        let (recorder, mut producer) = recorder();
+        producer.write(&vec![0; 960]);
+        let mut session = RtpSessionTx {
+            recorder: Some(recorder),
+            recorder_notify: Notify::new(),
+            transmit_deadline: Deadline::Never,
+            recorder_sink: None,
+        };
+        let peer = Peer {
+            blocked: Cell::new(true),
+            sent: Cell::new(0),
+        };
+        session.reconcile(Some(&peer)).unwrap();
+        assert!(matches!(session.transmit_deadline, Deadline::SleepUntil(_)));
+        assert_eq!(peer.sent.get(), 0);
+
+        let event = tokio::time::timeout(Duration::from_secs(1), session.sleep())
+            .await
+            .unwrap();
+        assert!(event.is_some());
+        session.reconcile(Some(&peer)).unwrap();
+        assert_eq!(peer.sent.get(), 1);
+        assert!(matches!(session.transmit_deadline, Deadline::Never));
+    }
 }
