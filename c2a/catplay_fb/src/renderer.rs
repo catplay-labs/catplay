@@ -238,7 +238,7 @@ impl Renderer {
                 RenderOp::ReleaseFont { id } => self.assets.release_font(id),
             }
 
-            warn!("Finished OP {op:?} in {:?}", Instant::now() - start);
+            debug!("Finished OP {op:?} in {:?}", Instant::now() - start);
         }
 
         Ok(())

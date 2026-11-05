@@ -31,6 +31,11 @@ impl RtspRequest {
         }
     }
 
+    /// `POST /feedback`: the keep-alive both peers send about once per second for the whole session.
+    pub fn is_keepalive(&self) -> bool {
+        self.method == RtspMethod::Post && self.url.as_ref() == "/feedback"
+    }
+
     pub fn with_payload(method: RtspMethod, url: impl Into<RtspString>, payload: impl Into<BytesMut>) -> Self {
         RtspRequest {
             method,
@@ -170,5 +175,17 @@ impl fmt::Display for RtspRequest {
             write!(f, "{:?}", pretty_plist_value(&payload))?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_post_feedback_is_a_keepalive() {
+        assert!(RtspRequest::new(RtspMethod::Post, "/feedback").is_keepalive());
+        assert!(!RtspRequest::new(RtspMethod::Post, "/command").is_keepalive());
+        assert!(!RtspRequest::new(RtspMethod::Get, "/info").is_keepalive());
     }
 }
