@@ -148,8 +148,8 @@ impl CarManager {
         }
     }
 
-    pub fn background(self) {
-        tokio::spawn(async move { self.worker().await });
+    pub fn background(self) -> catplay_util::AbortOnDropHandle<()> {
+        spawn(async move { self.worker().await })
     }
 
     pub async fn worker(mut self) {

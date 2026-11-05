@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use catplay_bt::BluezManager;
 use catplay_carplay::carplay_rx::{
     AirPlayReceiverHandleRef, AirPlayReceiverProfile, AirPlayReceiverSink,
     sink::{AirPlayServer, AirPlayServerShared},
@@ -17,6 +18,9 @@ use catplay_util::{
 };
 use log::{debug, error, info, trace, warn};
 use macaddr::MacAddr6;
+
+#[path = "device_cycle.rs"]
+mod device_cycle;
 
 use crate::{CarPlayServerSession, CarPlaySessionIdentity};
 
@@ -55,6 +59,11 @@ pub struct CarPlayWirelessGadget<T: AirPlayReceiverSink> {
     bt_last_connect_cache_loaded: bool,
 
     burst_wakeups: bool,
+    switch_requested: bool,
+    switch_query: Option<AbortOnDropHandle<Result<Option<MacAddr6>, String>>>,
+    switch_target: Option<(MacAddr6, Instant)>,
+    switch_previous: Option<MacAddr6>,
+    switch_car_reset_requested: bool,
 }
 
 impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
@@ -98,6 +107,11 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
                 bt_last_connect_cache_file: bt_last_connect_cache_file.map(|p| p.into()),
                 bt_last_connect_cache_loaded: false,
                 burst_wakeups: false,
+                switch_requested: false,
+                switch_query: None,
+                switch_target: None,
+                switch_previous: None,
+                switch_car_reset_requested: false,
             },
             Ok(LocalState::Initial),
         )
@@ -198,6 +212,9 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
 
     fn sync_bt_last_connect(&mut self) {
         let last_connect = self.get_bt_last_connect();
+        if let Some(peer) = last_connect {
+            self.last_bt_peer = Some(peer);
+        }
         if let Some(file) = self.bt_last_connect_cache_file.as_ref() {
             let Some(last_connect) = last_connect else {
                 return;
@@ -227,6 +244,137 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
 
     pub fn set_invites_blocked(&mut self, blocked: bool) {
         self.invites_blocked = blocked;
+        if blocked {
+            self.last_bt_peer_task.take();
+            if let Some(server) = self.server.as_mut() {
+                server.stop_inviting();
+            }
+        }
+    }
+
+    /// The owner must rebuild the car session, keeping invites blocked until ready.
+    pub fn take_switch_car_reset_request(&mut self) -> bool {
+        std::mem::take(&mut self.switch_car_reset_requested)
+    }
+
+    pub fn current_phone_matches_switch_target(&mut self) -> bool {
+        match self.switch_target {
+            Some((target, _)) => self.get_bt_last_connect() == Some(target),
+            None => true,
+        }
+    }
+
+    pub fn close_for_car_restart(&mut self) {
+        self.set_invites_blocked(true);
+        if let Some(session) = self.find_active_session() {
+            session.close(catplay_carplay::rtsp_frame::RtspError::UnexpectedState(
+                "Car session restarting".into(),
+            ));
+        }
+    }
+
+    /// Coalesce presses while a switch is pending. Pairings are never removed.
+    pub fn request_next_device(&mut self) {
+        if self.switch_query.is_none() && self.switch_target.is_none() {
+            self.switch_requested = true;
+        }
+    }
+
+    pub fn is_switching_device(&self) -> bool {
+        self.switch_requested || self.switch_query.is_some() || self.switch_target.is_some()
+    }
+
+    async fn reconcile_device_switch(&mut self) {
+        if self.switch_requested {
+            self.switch_requested = false;
+            // Never drop an active session unless its Bluetooth identity is known.
+            let current = self.get_bt_last_connect().or(self.last_bt_peer);
+            if self.find_active_session().is_some() && current.is_none() {
+                warn!("Cannot switch device: active phone identity is unknown");
+                return;
+            }
+            let adapter = self.hci.clone();
+            self.switch_query = Some(spawn(async move {
+                let phones = BluezManager::new()
+                    .paired_iphones(&adapter)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(device_cycle::next_device(&phones, current))
+            }));
+        }
+        if self
+            .switch_query
+            .as_ref()
+            .is_some_and(|task| task.is_finished())
+        {
+            match self.switch_query.take().unwrap().await {
+                Ok(Ok(Some(target))) => {
+                    let previous = self.get_bt_last_connect().or(self.last_bt_peer);
+                    // Cancel the old auto-reconnect before selecting a different phone.
+                    self.last_bt_peer_task.take();
+                    if let Some(server) = self.server.as_mut() {
+                        server.stop_inviting();
+                    }
+                    if let Some(session) = self.find_active_session() {
+                        session.close(catplay_carplay::rtsp_frame::RtspError::UnexpectedState(
+                            "Device switch requested".into(),
+                        ));
+                    }
+                    self.switch_target = Some((target, Instant::now() + Duration::from_secs(60)));
+                    self.switch_previous = previous;
+                    self.switch_car_reset_requested = true;
+                    info!("Device switch selected; waiting for car session restart");
+                    // The parent consumes this request before we invite the target.
+                    return;
+                }
+                Ok(Ok(None)) => info!("No other paired iPhone; keeping current session"),
+                Ok(Err(err)) => warn!("Cannot query paired iPhones: {err}"),
+                Err(err) => warn!("Device-switch task failed: {err}"),
+            }
+        }
+        if let Some((target, deadline)) = self.switch_target {
+            if Instant::now() >= deadline {
+                self.switch_target = None;
+                self.switch_previous = None;
+                self.switch_car_reset_requested = false;
+                self.last_bt_peer_task.take();
+                warn!("Device switch timed out; resuming normal discovery");
+            } else if !self.invites_blocked && !self.switch_car_reset_requested {
+                if self.find_active_session().is_some() && self.get_bt_last_connect() == Some(target) {
+                    self.switch_target = None;
+                    self.switch_previous = None;
+                    self.last_bt_peer_task.take();
+                    info!("Device switch connected");
+                } else if self.last_bt_peer_task.is_none() {
+                    let adapter = self.hci.clone();
+                    let previous = self.switch_previous.take();
+                    self.last_bt_peer_task = Some(spawn(async move {
+                        if let Some(previous) = previous {
+                            if let Err(err) = BluezManager::new()
+                                .disconnect_peer(&adapter, previous)
+                                .await
+                            {
+                                debug!("Previous Bluetooth link already closed or unavailable: {err}");
+                            }
+                        }
+                        // The car-side handshake has completed before entering here.
+                        loop {
+                            if BluetoothManager::invite_iphone(&adapter, &target)
+                                .await
+                                .is_ok()
+                            {
+                                break;
+                            }
+                            if Instant::now() >= deadline {
+                                break;
+                            }
+                            sleep(Duration::from_secs(2)).await;
+                        }
+                    }));
+                    info!("Car session ready; inviting selected iPhone");
+                }
+            }
+        }
     }
 }
 
@@ -236,6 +384,7 @@ impl<T: AirPlayReceiverSink> AsyncShutdown for CarPlayWirelessGadget<T> {
 
         self.bluetooth.take();
         self.last_bt_peer_task.take();
+        self.switch_query.take();
     }
 }
 
@@ -268,6 +417,12 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
             }
             self.bluetooth.take();
             self.last_mac.take();
+            self.switch_query.take();
+            self.switch_target = None;
+            self.switch_previous = None;
+            self.switch_car_reset_requested = false;
+            self.switch_requested = false;
+            self.last_bt_peer_task.take();
         }
 
         self.burst_wakeups = match new {
@@ -292,6 +447,17 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
 
         self.load_bt_last_connect();
         self.sync_bt_last_connect();
+
+        if self.server.is_some() && self.bluetooth.is_some() {
+            self.reconcile_device_switch().await;
+        }
+        if self.switch_target.is_some() {
+            if let Some(server) = self.server.as_mut() {
+                server.stop_inviting();
+            }
+            // Do not let the generic mDNS inviter race the explicit Bluetooth target.
+            return LocalState::Passive.into();
+        }
 
         // Healthcheck - AirPlay server
         if let Some(_server) = self.server.as_ref() {
@@ -463,6 +629,13 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
                 }
             }
             LocalState::StartingLastConnect { hci, peer_mac, .. } => {
+                // Do not spend the reconnect window before the radio is usable.
+                if self.invites_blocked {
+                    return prev;
+                }
+                if self.find_active_session().is_some() {
+                    return LocalState::Receiving.into();
+                }
                 if self.last_bt_peer_task.is_none() {
                     let hci = hci.clone();
                     let peer_mac = *peer_mac;
@@ -504,6 +677,9 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
                 }
             }
             LocalState::Inviting {} => {
+                if self.invites_blocked {
+                    return LocalState::Passive.into();
+                }
                 if self.find_active_session().is_some() {
                     return LocalState::Receiving.into();
                 }
@@ -532,6 +708,12 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
 
                 match self.find_active_session() {
                     None if self.invites_blocked => LocalState::Passive.into(),
+                    None if self.last_bt_peer_task.is_none() && self.last_bt_peer.is_some() => LocalState::StartingLastConnect {
+                        hci: self.hci.clone(),
+                        mac: self.last_mac.unwrap(),
+                        peer_mac: self.last_bt_peer.unwrap(),
+                    }
+                    .into(),
                     None => LocalState::Inviting.into(),
                     Some(_) => LocalState::Receiving.into(),
                 }

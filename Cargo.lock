@@ -368,6 +368,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "catplay_bonjour",
+ "catplay_bt",
  "catplay_carplay",
  "catplay_csm",
  "catplay_hap",
