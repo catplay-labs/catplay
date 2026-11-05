@@ -315,6 +315,7 @@ dependencies = [
  "catplay_util",
  "futures",
  "if-addrs",
+ "insta",
  "libc 1.0.0-alpha.4",
  "log",
  "macaddr",

@@ -34,6 +34,8 @@ pub(super) fn filter_audio_sample_rates(iphone: &mut [AudioFormatStruct], car: &
                 let supported = match asbd.sample_rate {
                     44_100 => pcm.intersects(AudioFormat::PCM_44100_MONO | AudioFormat::PCM_44100_STEREO),
                     48_000 => pcm.intersects(AudioFormat::PCM_48000_MONO | AudioFormat::PCM_48000_STEREO),
+                    16_000 => pcm.intersects(AudioFormat::PCM_16000_MONO | AudioFormat::PCM_16000_STEREO),
+                    24_000 => pcm.intersects(AudioFormat::PCM_24000_MONO | AudioFormat::PCM_24000_STEREO),
                     _ => true,
                 };
                 if !supported {
@@ -48,6 +50,7 @@ pub(super) fn filter_audio_sample_rates(iphone: &mut [AudioFormatStruct], car: &
 mod tests {
     use super::*;
     use catplay_carplay::{carplay_rx::sink::AirPlayReceiver, msg::InfoMessageResponse};
+    use insta::assert_debug_snapshot;
 
     fn defaults() -> Vec<AudioFormatStruct> {
         let mut info = InfoMessageResponse::default();
@@ -149,5 +152,61 @@ mod tests {
             output(&info, StreamType::AltAudio, AudioType::Default),
             AudioFormat::PCM_44100_STEREO
         );
+    }
+
+    #[test]
+    fn mhi2q_210_81_uses_48k_for_media_and_16k_for_alt_audio() {
+        // HARMAN / AUDI 4940, sourceVersion "210.81".
+        let car = [
+            AudioFormatStruct {
+                audio_input_formats: Some(AudioFormat::PCM_16000_MONO),
+                audio_output_formats: Some(AudioFormat::PCM_16000_MONO | AudioFormat::PCM_48000_STEREO),
+                stream_type: StreamType::MainAudio,
+                audio_type: None,
+            },
+            AudioFormatStruct {
+                audio_input_formats: Some(AudioFormat::PCM_16000_MONO),
+                audio_output_formats: Some(AudioFormat::PCM_16000_MONO),
+                stream_type: StreamType::AltAudio,
+                audio_type: None,
+            },
+        ];
+
+        let mut iphone = defaults();
+        filter_audio_sample_rates(&mut iphone, &car);
+
+        // Wireless media must decode to the car's PCM 48 kHz stereo.
+        assert_eq!(
+            output(&iphone, StreamType::MainHighAudio, AudioType::Media),
+            AudioFormat::AAC_LC_48000_STEREO,
+        );
+
+        assert_eq!(
+            output(&iphone, StreamType::MainAudio, AudioType::Media),
+            AudioFormat::PCM_48000_STEREO,
+        );
+
+        // // The legacy PCM-only entry must remain usable.
+        // assert_eq!(
+        //     output(&iphone, StreamType::AltAudio, AudioType::Compatibility),
+        //     AudioFormat::PCM_16000_MONO,
+        // );
+
+        assert_eq!(
+            output(&iphone, StreamType::AltAudio, AudioType::Compatibility),
+            AudioFormat::empty(),
+        );
+        let alt = output(&iphone, StreamType::AltAudio, AudioType::Default);
+
+        // Require a usable compressed format for wireless AltAudio.
+        assert!(
+            alt.contains(AudioFormat::OPUS_16000_MONO),
+            "AltAudio/Default must offer Opus 16 kHz: {alt:?}",
+        );
+
+        // PCM 16 kHz may also be offered, but no other rate may survive.
+        let allowed = AudioFormat::PCM_16000_MONO | AudioFormat::OPUS_16000_MONO;
+        assert!(allowed.contains(alt), "AltAudio/Default must decode to PCM 16 kHz mono: {alt:?}",);
+        assert_debug_snapshot!(iphone);
     }
 }

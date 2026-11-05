@@ -87,7 +87,13 @@ impl AirPlayReceiver {
         // --- Alt Audio - Default ---
         r.audio_formats.push(AudioFormatStruct {
             audio_input_formats: None,
-            audio_output_formats: Some(AudioFormat::PCM_44100_STEREO | AudioFormat::PCM_48000_STEREO | AudioFormat::OPUS_48000_MONO),
+            audio_output_formats: Some(
+                AudioFormat::PCM_44100_STEREO
+                    | AudioFormat::PCM_48000_STEREO
+                    | AudioFormat::OPUS_48000_MONO
+                    | AudioFormat::OPUS_24000_MONO
+                    | AudioFormat::OPUS_16000_MONO,
+            ),
             stream_type: StreamType::AltAudio,
             audio_type: Some(AudioType::Default),
         });

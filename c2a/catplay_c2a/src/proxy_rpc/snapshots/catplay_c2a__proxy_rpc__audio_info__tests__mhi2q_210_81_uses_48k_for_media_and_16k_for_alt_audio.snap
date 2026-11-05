@@ -1,0 +1,131 @@
+---
+source: c2a/catplay_c2a/src/proxy_rpc/audio_info.rs
+assertion_line: 206
+expression: iphone
+---
+[
+    AudioFormatStruct {
+        audio_input_formats: Some(
+            AudioFormat(
+                PCM_8000_MONO | PCM_16000_MONO | PCM_24000_MONO,
+            ),
+        ),
+        audio_output_formats: Some(
+            AudioFormat(
+                PCM_8000_MONO | PCM_16000_MONO | PCM_48000_STEREO,
+            ),
+        ),
+        stream_type: MainAudio,
+        audio_type: Some(
+            Compatibility,
+        ),
+    },
+    AudioFormatStruct {
+        audio_input_formats: None,
+        audio_output_formats: Some(
+            AudioFormat(
+                0x0,
+            ),
+        ),
+        stream_type: AltAudio,
+        audio_type: Some(
+            Compatibility,
+        ),
+    },
+    AudioFormatStruct {
+        audio_input_formats: None,
+        audio_output_formats: Some(
+            AudioFormat(
+                PCM_48000_STEREO | OPUS_48000_MONO,
+            ),
+        ),
+        stream_type: MainAudio,
+        audio_type: Some(
+            Alert,
+        ),
+    },
+    AudioFormatStruct {
+        audio_input_formats: Some(
+            AudioFormat(
+                PCM_16000_MONO | PCM_24000_MONO | OPUS_16000_MONO | OPUS_24000_MONO,
+            ),
+        ),
+        audio_output_formats: Some(
+            AudioFormat(
+                PCM_16000_MONO | OPUS_16000_MONO,
+            ),
+        ),
+        stream_type: MainAudio,
+        audio_type: Some(
+            Default,
+        ),
+    },
+    AudioFormatStruct {
+        audio_input_formats: None,
+        audio_output_formats: Some(
+            AudioFormat(
+                PCM_48000_STEREO,
+            ),
+        ),
+        stream_type: MainAudio,
+        audio_type: Some(
+            Media,
+        ),
+    },
+    AudioFormatStruct {
+        audio_input_formats: Some(
+            AudioFormat(
+                PCM_16000_MONO | PCM_24000_MONO | PCM_32000_MONO | OPUS_16000_MONO | OPUS_24000_MONO,
+            ),
+        ),
+        audio_output_formats: Some(
+            AudioFormat(
+                PCM_16000_MONO | PCM_32000_MONO | OPUS_16000_MONO,
+            ),
+        ),
+        stream_type: MainAudio,
+        audio_type: Some(
+            Telephony,
+        ),
+    },
+    AudioFormatStruct {
+        audio_input_formats: Some(
+            AudioFormat(
+                PCM_24000_MONO | OPUS_24000_MONO,
+            ),
+        ),
+        audio_output_formats: Some(
+            AudioFormat(
+                0x0,
+            ),
+        ),
+        stream_type: MainAudio,
+        audio_type: Some(
+            SpeechRecognition,
+        ),
+    },
+    AudioFormatStruct {
+        audio_input_formats: None,
+        audio_output_formats: Some(
+            AudioFormat(
+                OPUS_16000_MONO,
+            ),
+        ),
+        stream_type: AltAudio,
+        audio_type: Some(
+            Default,
+        ),
+    },
+    AudioFormatStruct {
+        audio_input_formats: None,
+        audio_output_formats: Some(
+            AudioFormat(
+                AAC_LC_48000_STEREO,
+            ),
+        ),
+        stream_type: MainHighAudio,
+        audio_type: Some(
+            Media,
+        ),
+    },
+]
