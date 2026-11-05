@@ -780,20 +780,27 @@ impl CsmSession for CarPlayClientSession {
                 //     &_handle,
                 // )?;
             }
-            self.send(
-                &StartLocationInformation {
-                    global_positioning_system_fix_data: CsmFlag::Yes,
-                    recommended_minimum_specific_gps_transit_data: CsmFlag::Yes,
-                    gps_satellites_in_view: CsmFlag::No,
-                    vehicle_speed_data: CsmFlag::Yes,
-                    vehicle_gyro_data: CsmFlag::No,
-                    vehicle_accelerometer_data: CsmFlag::No,
-                    vehicle_heading_data: CsmFlag::No,
-                    ..StartLocationInformation::default()
-                },
-                &_handle,
-            )?;
-            self.send(&StopLocationInformation {}, &_handle)?;
+            
+            // iPhone does this GPS probe, but:
+            // - it's probably irrelevant for compatibility
+            // - by placing it here we don't properly gate it to be after power negotiations
+            if false {
+                self.send(
+                    &StartLocationInformation {
+                        global_positioning_system_fix_data: CsmFlag::Yes,
+                        recommended_minimum_specific_gps_transit_data: CsmFlag::Yes,
+                        gps_satellites_in_view: CsmFlag::No,
+                        vehicle_speed_data: CsmFlag::Yes,
+                        vehicle_gyro_data: CsmFlag::No,
+                        vehicle_accelerometer_data: CsmFlag::No,
+                        vehicle_heading_data: CsmFlag::No,
+                        ..StartLocationInformation::default()
+                    },
+                    &_handle,
+                )?;
+                self.send(&StopLocationInformation {}, &_handle)?;
+
+            }
             /*
                        NowPlayingUpdate { media_item: Some(MediaItem { persistent_id: None, title: None, media_type: [], rating: None, playback_duration_in_ms: None, album_persistent_id: None, album_title: None, album_track_number: None, album_track_count: None, album_disc_number: None, album_disc_count: None, artist_persistent_id: None, artist: None, album_artist_persistent_id: None, album_artist: None, genre_persistent_id: None, genre: None, composer_persistent_id: None, composer: None, is_part_of_compilation: None, is_like_supported: None, is_ban_supported: None, is_liked: None, is_banned: None, is_resident_on_device: None, artwork_file_transfer_id: Some(129), chapter_count: None }), playback_attributes: None }
             */
