@@ -1,11 +1,8 @@
 use std::{
-    cell::UnsafeCell,
-    fmt::{self, Debug},
-    sync::{
+    cell::UnsafeCell, fmt::{self, Debug}, ptr, sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
-    },
-    time::{Duration, Instant},
+    }, time::{Duration, Instant},
 };
 
 use crate::{
@@ -327,6 +324,11 @@ impl<T: Copy + Default> RingProducer<T> {
         self.0.write(input)
     }
 
+    /// See [`RingBuffer::transfer_from`].
+    pub fn transfer_from(&mut self, other: &mut RingConsumer<T>) -> usize {
+        self.0.transfer_from(&other.0)
+    }
+
     pub fn write_default(&mut self, repeat: usize) {
         self.0.write_default(repeat);
     }
@@ -459,6 +461,38 @@ impl<T: Copy + Default> RingBuffer<T> {
             return Some((start_abs + first_len + gap_start, gap_len));
         }
         None
+    }
+
+    /// Moves as much of `other`'s available timeline as fits in this ring's
+    /// free capacity, returning the number of timeline samples transferred.
+    /// Only transferred samples are consumed from `other`; an empty source
+    /// does not generate underflow or advance either timeline.
+    ///
+    /// Data is copied, while gaps and source overflows become gaps in this
+    /// ring, preserving the duration of missing audio. Overflow itself is
+    /// derived from head distance and cannot be stored as a segment.
+    /// Existing unread samples in this ring are not overwritten.
+    ///
+    /// This operation uses this ring's producer and `other`'s consumer roles.
+    /// The rings must be distinct.
+    pub fn transfer_from(&self, other: &Self) -> usize {
+        assert!(!ptr::eq(self, other), "cannot transfer a ring into itself");
+
+        let write = self.write_head.load(Ordering::Relaxed);
+        let read = self.read_head.load(Ordering::Acquire);
+        let available = self.capacity.saturating_sub(write.saturating_sub(read));
+        let mut transferred = 0;
+        for segment in other.iter_segments(available, false) {
+            match segment {
+                RingSegment::Data(data) => {
+                    self.write(data);
+                }
+                RingSegment::Gap(n) | RingSegment::Overflow(n) => self.advance_timeline(n),
+                RingSegment::Underflow(_) => unreachable!("underflow emission is disabled"),
+            }
+            transferred += segment.len();
+        }
+        transferred
     }
 
     pub fn advance_timeline(&self, size: usize) {
@@ -711,6 +745,111 @@ mod tests {
         let mut segs = Vec::new();
         rb.read_segments(requested, false, |seg| segs.push(seg));
         segs
+    }
+
+    #[test]
+    fn test_transfer_preserves_data_and_missing_timeline() {
+        let source = RingBuffer::<i16>::new_unsplit(8);
+        source.write(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        source.advance_timeline(2);
+        source.write(&[9, 10]);
+        let destination = RingBuffer::<i16>::new_unsplit(16);
+        destination.write(&[42]);
+
+        assert_eq!(destination.transfer_from(&source), 12);
+        assert_eq!(source.total_consumed(), 12);
+        assert_eq!(destination.transfer_from(&source), 0);
+        assert_eq!(destination.total_written(), 13);
+        assert_eq!(
+            collect_segments_no_underflow(&destination, 16),
+            vec![
+                RingSegment::Data(&[42]),
+                RingSegment::Gap(4),
+                RingSegment::Data(&[5, 6, 7, 8]),
+                RingSegment::Gap(2),
+                RingSegment::Data(&[9, 10]),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_transfer_stops_at_capacity_inside_each_segment_kind() {
+        for free in [1, 3, 5] {
+            let source = RingBuffer::<i16>::new_unsplit(8);
+            source.advance_timeline(2);
+            source.write(&[1, 2]);
+            source.advance_timeline(2);
+            source.write(&[3, 4]);
+            source.advance_timeline(2);
+            // Overflow(2), Data([1, 2]), Gap(2), Data([3, 4]), Gap(2).
+            let destination = RingBuffer::<i16>::new_unsplit(8);
+            destination.write(&vec![42; 8 - free]);
+
+            assert_eq!(destination.transfer_from(&source), free);
+            assert_eq!(source.total_consumed(), free);
+            assert_eq!(destination.transfer_from(&source), 0);
+            assert_eq!(source.total_consumed(), free);
+
+            let expected = match free {
+                1 => vec![RingSegment::Data(&[42; 7]), RingSegment::Gap(1)],
+                3 => vec![RingSegment::Data(&[42; 5]), RingSegment::Gap(2), RingSegment::Data(&[1])],
+                5 => vec![
+                    RingSegment::Data(&[42; 3]),
+                    RingSegment::Gap(2),
+                    RingSegment::Data(&[1, 2]),
+                    RingSegment::Gap(1),
+                ],
+                _ => unreachable!(),
+            };
+            assert_eq!(collect_segments_no_underflow(&destination, 8), expected);
+
+            assert_eq!(destination.transfer_from(&source), 8.min(10 - free));
+            assert_eq!(source.total_consumed(), (free + 8).min(10));
+            let expected_tail = match free {
+                1 => vec![
+                    RingSegment::Gap(1),
+                    RingSegment::Data(&[1, 2]),
+                    RingSegment::Gap(2),
+                    RingSegment::Data(&[3, 4]),
+                    RingSegment::Gap(1),
+                ],
+                3 => vec![
+                    RingSegment::Data(&[2]),
+                    RingSegment::Gap(2),
+                    RingSegment::Data(&[3, 4]),
+                    RingSegment::Gap(2),
+                ],
+                5 => vec![RingSegment::Gap(1), RingSegment::Data(&[3, 4]), RingSegment::Gap(2)],
+                _ => unreachable!(),
+            };
+            assert_eq!(collect_segments_no_underflow(&destination, 8), expected_tail);
+            assert_eq!(destination.transfer_from(&source), 10usize.saturating_sub(free + 8));
+            assert_eq!(source.total_consumed(), 10);
+        }
+    }
+
+    #[test]
+    fn test_producer_transfer_from_consumer() {
+        let (mut source, mut consumer) = RingBuffer::<i16>::spsc(8);
+        let (mut destination, output) = RingBuffer::<i16>::spsc(8);
+        source.write(&[1, 2]);
+        source.advance_timeline(2);
+        source.write(&[3, 4]);
+
+        assert_eq!(destination.transfer_from(&mut consumer), 6);
+        assert_eq!(destination.transfer_from(&mut consumer), 0);
+        assert_eq!(
+            output.iter_segments(8, false).collect::<Vec<_>>(),
+            vec![RingSegment::Data(&[1, 2]), RingSegment::Gap(2), RingSegment::Data(&[3, 4])]
+        );
+        assert_eq!(consumer.stat().consumed, 6);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot transfer a ring into itself")]
+    fn test_transfer_rejects_same_ring() {
+        let ring = RingBuffer::<i16>::new_unsplit(8);
+        ring.transfer_from(&ring);
     }
 
     #[test]
