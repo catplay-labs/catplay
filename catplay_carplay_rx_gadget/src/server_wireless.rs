@@ -62,8 +62,8 @@ pub struct CarPlayWirelessGadget<T: AirPlayReceiverSink> {
     burst_wakeups: bool,
     switch_requested: bool,
     switch_query: Option<AbortOnDropHandle<Result<Option<MacAddr6>, String>>>,
-    switch_target: Option<(MacAddr6, Instant)>,
-    switch_previous: Option<MacAddr6>,
+    switch_target: Option<(MacAddr6, device_cycle::SwitchTiming)>,
+    switch_bt_task: Option<AbortOnDropHandle<bool>>,
     switch_car_reset_requested: bool,
 }
 
@@ -111,7 +111,7 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
                 switch_requested: false,
                 switch_query: None,
                 switch_target: None,
-                switch_previous: None,
+                switch_bt_task: None,
                 switch_car_reset_requested: false,
             },
             Ok(LocalState::Initial),
@@ -260,7 +260,7 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
         }
     }
 
-    /// The owner must rebuild the car session, keeping invites blocked until ready.
+    /// The owner rebuilds the radio while the explicit Bluetooth switch runs.
     pub fn take_switch_car_reset_request(&mut self) -> bool {
         std::mem::take(&mut self.switch_car_reset_requested)
     }
@@ -328,11 +328,47 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
                             "Device switch requested".into(),
                         ));
                     }
-                    self.switch_target = Some((target, Instant::now() + Duration::from_secs(60)));
-                    self.switch_previous = previous;
+                    let timing = device_cycle::SwitchTiming::new(Instant::now());
+                    let deadline = timing.bluetooth_deadline();
+                    let adapter = self.hci.clone();
+                    self.switch_target = Some((target, timing));
+                    // Keep this task separate from the normal auto-reconnect task:
+                    // loss of radio readiness must not cancel the Bluetooth switch.
+                    self.switch_bt_task = Some(spawn(async move {
+                        if let Some(previous) = previous {
+                            let disconnect = BluezManager::new();
+                            if !matches!(
+                                tokio::time::timeout(Duration::from_secs(3), disconnect.disconnect_peer(&adapter, previous),).await,
+                                Ok(Ok(()))
+                            ) {
+                                debug!("Previous Bluetooth disconnect failed or timed out; continuing target switch");
+                            }
+                        }
+                        info!("Device switch: starting selected iPhone Bluetooth connection");
+                        while Instant::now() < deadline {
+                            let attempt = tokio::time::timeout_at(
+                                (Instant::now() + Duration::from_secs(5))
+                                    .min(deadline)
+                                    .into(),
+                                BluetoothManager::invite_iphone(&adapter, &target),
+                            )
+                            .await;
+                            if matches!(attempt, Ok(Ok(()))) {
+                                info!("Device switch: selected iPhone Bluetooth profile connected");
+                                return true;
+                            }
+                            debug!("Device switch: Bluetooth attempt failed or timed out");
+                            tokio::time::sleep_until(
+                                (Instant::now() + Duration::from_secs(2))
+                                    .min(deadline)
+                                    .into(),
+                            )
+                            .await;
+                        }
+                        false
+                    }));
                     self.switch_car_reset_requested = true;
-                    info!("Device switch selected; waiting for car session restart");
-                    // The parent consumes this request before we invite the target.
+                    info!("Device switch selected; connecting Bluetooth while renewing car session");
                     return;
                 }
                 Ok(Ok(None)) => info!("No other paired iPhone; keeping current session"),
@@ -340,47 +376,35 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
                 Err(err) => warn!("Device-switch task failed: {err}"),
             }
         }
-        if let Some((target, deadline)) = self.switch_target {
-            if Instant::now() >= deadline {
+        if self
+            .switch_bt_task
+            .as_ref()
+            .is_some_and(|task| task.is_finished())
+        {
+            let connected = matches!(self.switch_bt_task.take().unwrap().await, Ok(true));
+            if connected && let Some((_, timing)) = self.switch_target.as_mut() {
+                timing.bluetooth_connected();
+            }
+        }
+        if let Some((target, mut timing)) = self.switch_target {
+            let radio_ready = !self.invites_blocked && !self.switch_car_reset_requested;
+            let selected_phone = self.get_bt_last_connect() == Some(target);
+            if selected_phone {
+                // The incoming profile callback may precede the outgoing DBus reply.
+                timing.bluetooth_connected();
+                self.switch_bt_task.take();
+            }
+            if radio_ready && selected_phone && self.find_active_session().is_some() {
                 self.switch_target = None;
-                self.switch_previous = None;
+                self.switch_bt_task.take();
+                info!("Device switch connected");
+            } else if let Some(phase) = timing.observe(Instant::now(), radio_ready) {
+                self.switch_target = None;
                 self.switch_car_reset_requested = false;
-                self.last_bt_peer_task.take();
-                warn!("Device switch timed out; resuming normal discovery");
-            } else if !self.invites_blocked && !self.switch_car_reset_requested {
-                if self.find_active_session().is_some() && self.get_bt_last_connect() == Some(target) {
-                    self.switch_target = None;
-                    self.switch_previous = None;
-                    self.last_bt_peer_task.take();
-                    info!("Device switch connected");
-                } else if self.last_bt_peer_task.is_none() {
-                    let adapter = self.hci.clone();
-                    let previous = self.switch_previous.take();
-                    self.last_bt_peer_task = Some(spawn(async move {
-                        if let Some(previous) = previous {
-                            if let Err(err) = BluezManager::new()
-                                .disconnect_peer(&adapter, previous)
-                                .await
-                            {
-                                debug!("Previous Bluetooth link already closed or unavailable: {err}");
-                            }
-                        }
-                        // The car-side handshake has completed before entering here.
-                        loop {
-                            if BluetoothManager::invite_iphone(&adapter, &target)
-                                .await
-                                .is_ok()
-                            {
-                                break;
-                            }
-                            if Instant::now() >= deadline {
-                                break;
-                            }
-                            sleep(Duration::from_secs(2)).await;
-                        }
-                    }));
-                    info!("Car session ready; inviting selected iPhone");
-                }
+                self.switch_bt_task.take();
+                warn!("Device switch timed out in {phase:?}; resuming normal discovery");
+            } else {
+                self.switch_target = Some((target, timing));
             }
         }
     }
@@ -393,6 +417,7 @@ impl<T: AirPlayReceiverSink> AsyncShutdown for CarPlayWirelessGadget<T> {
         self.bluetooth.take();
         self.last_bt_peer_task.take();
         self.switch_query.take();
+        self.switch_bt_task.take();
     }
 }
 
@@ -427,7 +452,7 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
             self.last_mac.take();
             self.switch_query.take();
             self.switch_target = None;
-            self.switch_previous = None;
+            self.switch_bt_task.take();
             self.switch_car_reset_requested = false;
             self.switch_requested = false;
             self.last_bt_peer_task.take();
