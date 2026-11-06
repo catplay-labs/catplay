@@ -1,5 +1,6 @@
 mod client;
 mod session_lifecycle;
+mod stream_claims;
 mod stream_state;
 mod teardown_guard;
 mod teardown_task;

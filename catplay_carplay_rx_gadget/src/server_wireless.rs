@@ -15,12 +15,15 @@ use catplay_iap2_usb::{GadgetError, NcmHelper};
 use catplay_mfi::MfiDeficeRef;
 use catplay_util::{
     AbortOnDropHandle, ArcBox, AsyncShutdown, EventSleeper, Reconcilable, Reconciler, deadline_after, event_select, sleep, spawn,
+    spawn_blocking,
 };
 use log::{debug, error, info, trace, warn};
 use macaddr::MacAddr6;
 
 #[path = "device_cycle.rs"]
 mod device_cycle;
+#[path = "switch_intent.rs"]
+mod switch_intent;
 
 use crate::{CarPlayServerSession, CarPlaySessionIdentity};
 use catplay_util::handover_trace::{self as trace, Stage};
@@ -64,6 +67,12 @@ pub struct CarPlayWirelessGadget<T: AirPlayReceiverSink> {
     switch_query: Option<AbortOnDropHandle<Result<Option<MacAddr6>, String>>>,
     switch_target: Option<(MacAddr6, device_cycle::SwitchTiming)>,
     switch_bt_task: Option<AbortOnDropHandle<bool>>,
+    switch_old_session: Option<AirPlayReceiverHandleRef>,
+    switch_cache_load: Option<AbortOnDropHandle<Result<(Option<MacAddr6>, Option<MacAddr6>), String>>>,
+    switch_cleanup: Option<AbortOnDropHandle<Result<(), String>>>,
+    resume_target: Option<MacAddr6>,
+    switch_resuming: bool,
+    phone_recorded: bool,
     switch_car_reset_requested: bool,
 }
 
@@ -112,6 +121,12 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
                 switch_query: None,
                 switch_target: None,
                 switch_bt_task: None,
+                switch_old_session: None,
+                switch_cache_load: None,
+                switch_cleanup: None,
+                resume_target: None,
+                switch_resuming: false,
+                phone_recorded: false,
                 switch_car_reset_requested: false,
             },
             Ok(LocalState::Initial),
@@ -190,29 +205,43 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
         self.bt_last_connect_cache_loaded = false;
     }
 
-    fn load_bt_last_connect(&mut self) {
+    async fn load_bt_last_connect(&mut self) -> bool {
         if self.bt_last_connect_cache_loaded {
-            return;
+            return true;
         }
 
         let Some(file) = self.bt_last_connect_cache_file.as_ref() else {
-            return;
+            self.bt_last_connect_cache_loaded = true;
+            return true;
         };
-
-        self.bt_last_connect_cache_loaded = true;
-
-        let Ok(current) = fs::read_to_string(file) else {
-            return;
-        };
-
-        match current.trim().parse::<MacAddr6>() {
-            Ok(mac) => {
-                self.last_bt_peer.replace(mac);
-            }
-            Err(err) => {
-                warn!("Failed to parse Bluetooth last-connect cache file {file}: {err:?}");
-            }
+        if self.switch_cache_load.is_none() {
+            let file = file.clone();
+            self.switch_cache_load = Some(spawn_blocking(move || {
+                let previous = fs::read_to_string(&file)
+                    .ok()
+                    .and_then(|value| value.trim().parse::<MacAddr6>().ok());
+                let resume = switch_intent::resume(&switch_intent::path(&file))
+                    .map_err(|error| error.to_string())?
+                    .and_then(|value| value.parse::<MacAddr6>().ok());
+                Ok((previous, resume))
+            }));
         }
+        if !self.switch_cache_load.as_ref().unwrap().is_finished() {
+            return false;
+        }
+        self.bt_last_connect_cache_loaded = true;
+        match self.switch_cache_load.take().unwrap().await {
+            Ok(Ok((previous, resume))) => {
+                self.last_bt_peer = resume.or(previous);
+                self.resume_target = resume;
+                if let Some(target) = resume {
+                    self.switch_target = Some((target, device_cycle::SwitchTiming::new(Instant::now())));
+                    info!("Resuming stored phone switch after restart");
+                }
+            }
+            _ => warn!("Could not load Bluetooth preference or switch intent"),
+        }
+        true
     }
 
     fn sync_bt_last_connect(&mut self) {
@@ -260,16 +289,59 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
         }
     }
 
+    pub fn set_phone_recorded(&mut self, recorded: bool) {
+        self.phone_recorded = recorded;
+    }
+
     /// The owner rebuilds the radio while the explicit Bluetooth switch runs.
-    pub fn take_switch_car_reset_request(&mut self) -> bool {
+    pub fn take_switch_handover_request(&mut self) -> bool {
         std::mem::take(&mut self.switch_car_reset_requested)
     }
 
-    pub fn current_phone_matches_switch_target(&mut self) -> bool {
-        match self.switch_target {
-            Some((target, _)) => self.get_bt_last_connect() == Some(target),
-            None => true,
+    pub fn cancel_device_switch(&mut self) {
+        if let Some(server) = self.server.as_mut() {
+            server.stop_inviting();
         }
+        if let Some((target, _)) = self.switch_target {
+            self.clear_switch_intent(target);
+        }
+        self.switch_target = None;
+        self.switch_query.take();
+        self.switch_bt_task.take();
+        self.switch_requested = false;
+        self.switch_car_reset_requested = false;
+        self.switch_old_session = None;
+    }
+
+    fn clear_switch_intent(&mut self, target: MacAddr6) {
+        if let Some(file) = self.bt_last_connect_cache_file.as_ref() {
+            let path = switch_intent::path(file);
+            let target = target.to_string();
+            self.switch_cleanup = Some(spawn_blocking(move || {
+                switch_intent::clear(&path, &target).map_err(|error| error.to_string())
+            }));
+        }
+    }
+
+    pub fn watch_previous_phone_release(&self) -> AbortOnDropHandle<bool> {
+        let old = self.switch_old_session.clone();
+        let mut sessions = self.shared.subscribe();
+        spawn(async move {
+            loop {
+                let still_old = {
+                    let session = sessions.borrow();
+                    old.as_ref()
+                        .zip(session.as_ref())
+                        .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
+                };
+                if !still_old {
+                    return true;
+                }
+                if sessions.changed().await.is_err() {
+                    return false;
+                }
+            }
+        })
     }
 
     pub fn close_for_car_restart(&mut self) {
@@ -283,7 +355,7 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
 
     /// Coalesce presses while a switch is pending. Pairings are never removed.
     pub fn request_next_device(&mut self) {
-        if self.switch_query.is_none() && self.switch_target.is_none() {
+        if self.switch_query.is_none() && self.switch_target.is_none() && self.switch_cleanup.is_none() {
             self.switch_requested = true;
         }
     }
@@ -293,7 +365,21 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
     }
 
     async fn reconcile_device_switch(&mut self) {
+        if self
+            .switch_cleanup
+            .as_ref()
+            .is_some_and(|task| task.is_finished())
+        {
+            if !matches!(self.switch_cleanup.take().unwrap().await, Ok(Ok(()))) {
+                warn!("Could not remove completed switch intent; boot retry limit remains active");
+            }
+        }
+        if let Some(target) = self.resume_target.take() {
+            self.switch_resuming = true;
+            self.switch_query = Some(spawn(async move { Ok(Some(target)) }));
+        }
         if self.switch_requested {
+            self.switch_resuming = false;
             self.switch_requested = false;
             // Never drop an active session unless its Bluetooth identity is known.
             let current = self.get_bt_last_connect().or(self.last_bt_peer);
@@ -302,12 +388,25 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
                 return;
             }
             let adapter = self.hci.clone();
+            let intent = self
+                .bt_last_connect_cache_file
+                .as_ref()
+                .map(|file| switch_intent::path(file));
             self.switch_query = Some(spawn(async move {
                 let phones = BluezManager::new()
                     .paired_iphones(&adapter)
                     .await
                     .map_err(|e| e.to_string())?;
-                Ok(device_cycle::next_device(&phones, current))
+                let target = device_cycle::next_device(&phones, current);
+                if let Some(target) = target
+                    && let Some(path) = intent
+                {
+                    spawn_blocking(move || switch_intent::save(&path, &target.to_string()))
+                        .await
+                        .map_err(|_| "Switch intent worker failed".to_owned())?
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok(target)
             }));
         }
         if self
@@ -321,14 +420,12 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
                     // Cancel the old auto-reconnect before selecting a different phone.
                     self.last_bt_peer_task.take();
                     if let Some(server) = self.server.as_mut() {
-                        server.stop_inviting();
+                        server.block_incoming_phone();
                     }
-                    if let Some(session) = self.find_active_session() {
-                        session.close(catplay_carplay::rtsp_frame::RtspError::UnexpectedState(
-                            "Device switch requested".into(),
-                        ));
-                    }
+                    // The radio owner closes this receiver only after entering its
+                    // handover phase. Closing it here races inflight command recovery.
                     let timing = device_cycle::SwitchTiming::new(Instant::now());
+                    self.switch_old_session = self.find_active_session();
                     let deadline = timing.bluetooth_deadline();
                     let adapter = self.hci.clone();
                     self.switch_target = Some((target, timing));
@@ -367,8 +464,9 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
                         }
                         false
                     }));
-                    self.switch_car_reset_requested = true;
-                    info!("Device switch selected; connecting Bluetooth while renewing car session");
+                    self.switch_car_reset_requested = !self.switch_resuming || self.switch_old_session.is_some();
+                    self.switch_resuming = false;
+                    info!("Device switch selected; preparing phone handover on existing radio session");
                     return;
                 }
                 Ok(Ok(None)) => info!("No other paired iPhone; keeping current session"),
@@ -394,14 +492,34 @@ impl<T: AirPlayReceiverSink> CarPlayWirelessGadget<T> {
                 timing.bluetooth_connected();
                 self.switch_bt_task.take();
             }
-            if radio_ready && selected_phone && self.find_active_session().is_some() {
+            let active = self.find_active_session();
+            let new_session = active.as_ref().is_some_and(|active| {
+                !self
+                    .switch_old_session
+                    .as_ref()
+                    .is_some_and(|old| Arc::ptr_eq(active, old))
+            });
+            if new_session {
+                // The server admitted only the selected control peer's addresses.
+                // Fast Wi-Fi reconnect does not require a fresh Bluetooth callback.
+                timing.bluetooth_connected();
+                self.switch_bt_task.take();
+            }
+            if radio_ready && new_session && self.phone_recorded {
+                self.clear_switch_intent(target);
                 self.switch_target = None;
                 self.switch_bt_task.take();
+                self.switch_old_session = None;
                 info!("Device switch connected");
             } else if let Some(phase) = timing.observe(Instant::now(), radio_ready) {
+                if let Some(session) = active.filter(|_| new_session && !self.phone_recorded) {
+                    session.close(catplay_carplay::rtsp_frame::RtspError::UserClosing);
+                }
+                self.clear_switch_intent(target);
                 self.switch_target = None;
                 self.switch_car_reset_requested = false;
                 self.switch_bt_task.take();
+                self.switch_old_session = None;
                 warn!("Device switch timed out in {phase:?}; resuming normal discovery");
             } else {
                 self.switch_target = Some((target, timing));
@@ -445,6 +563,11 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
 
         if new.is_err() {
             debug!("Cleaning up due to error state");
+            if self.switch_target.is_some() {
+                self.bt_last_connect_cache_loaded = false;
+                self.switch_cache_load.take();
+                self.resume_target = None;
+            }
             if let Some(mut server) = self.server.take() {
                 server.shutdown().await;
             }
@@ -452,6 +575,7 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
             self.last_mac.take();
             self.switch_query.take();
             self.switch_target = None;
+            self.switch_old_session = None;
             self.switch_bt_task.take();
             self.switch_car_reset_requested = false;
             self.switch_requested = false;
@@ -480,18 +604,35 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
         };
 
         trace::mark(Stage::WirelessCache);
-        self.load_bt_last_connect();
+        if !self.load_bt_last_connect().await {
+            return prev;
+        }
         self.sync_bt_last_connect();
 
         trace::mark(Stage::WirelessSwitch);
         if self.server.is_some() && self.bluetooth.is_some() {
             self.reconcile_device_switch().await;
         }
-        if self.switch_target.is_some() {
+        let active = self.find_active_session();
+        let selected_session_started = active.as_ref().is_some_and(|active| {
+            !self
+                .switch_old_session
+                .as_ref()
+                .is_some_and(|old| Arc::ptr_eq(active, old))
+        });
+        if let Some((target, _)) = self.switch_target
+            && self.server.is_some()
+        {
             if let Some(server) = self.server.as_mut() {
-                server.stop_inviting();
+                if selected_session_started {
+                    server.pause_inviting();
+                } else if !self.invites_blocked && !self.switch_car_reset_requested {
+                    server.start_inviting_target(Some(target));
+                } else {
+                    server.block_incoming_phone();
+                }
             }
-            // Do not let the generic mDNS inviter race the explicit Bluetooth target.
+            // Invite only this phone, including when its initial early attempt was rejected.
             return LocalState::Passive.into();
         }
 
@@ -641,6 +782,9 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
                 );
 
                 self.last_mac.replace(*mac);
+                if self.switch_target.is_some() {
+                    server.block_incoming_phone();
+                }
                 server
                     .bind()
                     .await

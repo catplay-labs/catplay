@@ -249,4 +249,14 @@ impl AirPlayTransmitter for AirPlayTransmitterProxy {
             Ok(v) => v,
         }
     }
+
+    async fn release_phone_streams(&self) -> RtspResult<()> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.schedule(move |t| {
+            Box::pin(async move {
+                let _ = tx.send(t.release_phone_streams().await);
+            })
+        });
+        rx.await.unwrap_or(Err(RtspError::Closed))
+    }
 }

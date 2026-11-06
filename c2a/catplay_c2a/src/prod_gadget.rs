@@ -19,12 +19,12 @@ use catplay_mfi::MfiDeficeRef;
 use catplay_util::handover_trace::{self as trace, Stage};
 use catplay_util::{
     AbortOnDropHandle, AsyncShutdown, EventReconciler, EventSleeper, EventToken, Reconcilable, Reconciler, deadline_after, event_select,
-    mpsc,
+    mpsc, oneshot, spawn,
 };
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::proxy_rpc::{CarManager, CarPlayRxSession, TxAdapter, TxAdapterOp};
+use crate::proxy_rpc::{CarManager, CarPlayRxSession, PhoneGate, TxAdapter, TxAdapterOp};
 
 pub struct ProdGadgetConfig {
     pub homekit_rx: HomekitStorageRef,
@@ -59,6 +59,7 @@ pub struct ProdGadget {
     last_tx: Arc<Mutex<Option<ProdGadgetSession>>>,
     accepting_phone: Arc<AtomicBool>,
     car_task: Option<AbortOnDropHandle<()>>,
+    phone_handover: Option<AbortOnDropHandle<catplay_carplay::rtsp_frame::RtspResult<()>>>,
     trace_heartbeat: Option<AbortOnDropHandle<()>>,
     trace_initialized: bool,
     burst_wakeups: bool,
@@ -141,6 +142,7 @@ impl ProdGadget {
                 last_tx: Default::default(),
                 accepting_phone: Arc::new(AtomicBool::new(false)),
                 car_task: None,
+                phone_handover: None,
                 trace_heartbeat: None,
                 trace_initialized: false,
                 burst_wakeups: false,
@@ -153,6 +155,7 @@ impl ProdGadget {
         trace::mark(Stage::ParentRadioRestart);
         // Reject new receivers before tearing down the worker they would use.
         self.accepting_phone.store(false, Ordering::Release);
+        self.phone_handover.take();
         self.last_tx.lock().unwrap().take();
         if let Some(rx) = self.rx.as_mut() {
             rx.child_mut().close_for_car_restart();
@@ -171,6 +174,7 @@ impl ProdGadget {
 
 impl AsyncShutdown for ProdGadget {
     async fn shutdown(&mut self) {
+        self.phone_handover.take();
         trace::stop();
         self.trace_heartbeat.take();
         self.accepting_phone.store(false, Ordering::Release);
@@ -196,13 +200,14 @@ impl AsyncShutdown for ProdGadget {
 #[derive(Clone)]
 pub struct ProdGadgetSession {
     pub proxy_tx: mpsc::UnboundedSender<TxAdapterOp>,
+    pub(crate) phones: PhoneGate,
 }
 
 impl EventSleeper for ProdGadget {
     async fn sleep(&mut self) -> Option<EventToken> {
         trace::mark(Stage::SleepLock);
         let mut pending_transmitter = self.pending_transmitter.lock().await;
-        let fallback = if self.burst_wakeups {
+        let fallback = if self.burst_wakeups || self.phone_handover.is_some() {
             Duration::from_millis(50)
         } else {
             Duration::from_millis(500)
@@ -248,6 +253,19 @@ impl Reconcilable for ProdGadget {
     }
 
     async fn render(&mut self, prev: LocalStatus, update: Instant) -> LocalStatus {
+        if self
+            .phone_handover
+            .as_ref()
+            .is_some_and(|task| task.is_finished())
+        {
+            let done = self.phone_handover.take().unwrap().await;
+            if matches!(done, Ok(Ok(()))) {
+                info!("Phone handover: media release confirmed; radio session preserved");
+            } else {
+                warn!("Phone media release failed or stalled; recovering radio and retaining target");
+                self.restart_car_session().await;
+            }
+        }
         if !self.trace_initialized {
             self.trace_initialized = true;
             if trace::start_from_env() {
@@ -289,10 +307,22 @@ impl Reconcilable for ProdGadget {
         }
         if let Some(rx) = self.rx.as_mut() {
             trace::mark(Stage::ParentAdmission);
-            let ready = self.last_tx.lock().unwrap().is_some();
+            let ready = self
+                .last_tx
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|car| !car.phones.paused())
+                && self.phone_handover.is_none();
+            let recorded = self
+                .last_tx
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|car| car.phones.recorded());
+            rx.child_mut().set_phone_recorded(recorded);
             rx.child_mut().set_invites_blocked(!ready);
-            self.accepting_phone
-                .store(ready && rx.child_mut().current_phone_matches_switch_target(), Ordering::Release);
+            self.accepting_phone.store(ready, Ordering::Release);
         }
         trace::mark(Stage::ParentRx);
         let _ = self.rx.reconcile().await;
@@ -301,10 +331,48 @@ impl Reconcilable for ProdGadget {
         if self
             .rx
             .as_mut()
-            .is_some_and(|rx| rx.child_mut().take_switch_car_reset_request())
+            .is_some_and(|rx| rx.child_mut().take_switch_handover_request())
         {
-            self.restart_car_session().await;
-            return LocalState::WaitingForCar.into();
+            self.accepting_phone.store(false, Ordering::Release);
+            let car = self.last_tx.lock().unwrap().clone();
+            if let Some(car) = car {
+                car.phones.pause();
+                let (ready, wait) = oneshot::channel();
+                if car
+                    .proxy_tx
+                    .unbounded_send(TxAdapterOp::BeginHandover { ready })
+                    .is_ok()
+                {
+                    let released = self
+                        .rx
+                        .as_ref()
+                        .unwrap()
+                        .child()
+                        .watch_previous_phone_release();
+                    self.phone_handover = Some(spawn(async move {
+                        let handover = async move {
+                            let result = wait
+                                .await
+                                .map_err(|_| catplay_carplay::rtsp_frame::RtspError::Closed)?;
+                            result?;
+                            if released.await.unwrap_or(false) {
+                                Ok(())
+                            } else {
+                                Err(catplay_carplay::rtsp_frame::RtspError::Closed)
+                            }
+                        };
+                        match tokio::time::timeout(Duration::from_secs(8), handover).await {
+                            Ok(result) => result,
+                            _ => Err(catplay_carplay::rtsp_frame::RtspError::Timeout),
+                        }
+                    }));
+                } else {
+                    warn!("Radio worker ended before handover; retaining switch target");
+                }
+            } else {
+                warn!("Radio disappeared before handover; retaining switch target");
+            }
+            return LocalState::WaitingForIPhone.into();
         }
 
         let Ok(_status) = prev.as_ref() else {
@@ -349,7 +417,10 @@ impl Reconcilable for ProdGadget {
                             return CarPlayRxSession::reject();
                         };
 
-                        let sess = TxAdapter::new(car.proxy_tx.clone());
+                        let Some(lease) = car.phones.acquire() else {
+                            return CarPlayRxSession::reject();
+                        };
+                        let sess = TxAdapter::new(car.proxy_tx.clone(), lease);
                         CarPlayRxSession::new(sess)
                     }
                 },
@@ -384,22 +455,29 @@ impl Reconcilable for ProdGadget {
             // pending_transmitter.replace(transmitter);
 
             let proxy_chan = mpsc::unbounded();
-            let car_state = ProdGadgetSession { proxy_tx: proxy_chan.0 };
+            let phones = PhoneGate::default();
+            let car_state = ProdGadgetSession {
+                proxy_tx: proxy_chan.0,
+                phones: phones.clone(),
+            };
 
             trace::mark(Stage::ParentManagerNew);
-            let transmitter2 = CarManager::new(transmitter, proxy_chan.1, self.cfg.persist_dir.clone())
+            let transmitter2 = CarManager::new(transmitter, proxy_chan.1, self.cfg.persist_dir.clone(), phones)
                 .await
                 .map_err(LocalError::CarSessionStart)?;
             self.car_task = Some(transmitter2.background());
             self.last_tx.lock().unwrap().replace(car_state);
         }
 
-        rx.child_mut()
-            .set_invites_blocked(self.last_tx.lock().unwrap().is_none());
-        self.accepting_phone.store(
-            self.last_tx.lock().unwrap().is_some() && rx.child_mut().current_phone_matches_switch_target(),
-            Ordering::Release,
-        );
+        let ready = self
+            .last_tx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|car| !car.phones.paused())
+            && self.phone_handover.is_none();
+        rx.child_mut().set_invites_blocked(!ready);
+        self.accepting_phone.store(ready, Ordering::Release);
 
         trace::mark(Stage::ParentReturn);
         match _status {
