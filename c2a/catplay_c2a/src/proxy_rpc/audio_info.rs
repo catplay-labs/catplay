@@ -101,15 +101,21 @@ mod tests {
                     );
                 }
             }
+            // The car advertises no PCM at 16/24 kHz, so both PCM and Opus
+            // at those rates are removed. 32 kHz remains outside this filter.
             assert_eq!(
                 output(&info, StreamType::MainAudio, AudioType::Telephony),
-                output(&original, StreamType::MainAudio, AudioType::Telephony),
+                AudioFormat::PCM_32000_MONO
+            );
+            assert_eq!(
+                output(&info, StreamType::MainAudio, AudioType::SpeechRecognition),
+                AudioFormat::empty()
             );
         }
     }
 
     #[test]
-    fn both_rates_preserve_defaults() {
+    fn both_media_rates_preserve_defaults_except_unsupported_16k_and_24k() {
         let mut info = defaults();
         let original = info.clone();
         let car = [
@@ -125,8 +131,17 @@ mod tests {
             ),
         ];
         filter_audio_sample_rates(&mut info, &car);
+        // Supporting both media rates does not imply support for 16/24 kHz
+        // microphone/voice output. Input capabilities remain unchanged.
+        let unsupported =
+            AudioFormat::PCM_16000_MONO | AudioFormat::PCM_24000_MONO | AudioFormat::OPUS_16000_MONO | AudioFormat::OPUS_24000_MONO;
         for (entry, original) in info.iter().zip(original) {
-            assert_eq!(entry.audio_output_formats, original.audio_output_formats);
+            assert_eq!(
+                entry.audio_output_formats,
+                original
+                    .audio_output_formats
+                    .map(|formats| formats - unsupported)
+            );
             assert_eq!(entry.audio_input_formats, original.audio_input_formats);
         }
     }
