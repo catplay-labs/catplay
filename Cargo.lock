@@ -310,6 +310,7 @@ dependencies = [
  "catplay_iap2_usb",
  "catplay_iap2_usb_host",
  "catplay_mfi",
+ "catplay_tokio",
  "catplay_tracing",
  "catplay_tracing_macro",
  "catplay_util",

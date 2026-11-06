@@ -485,8 +485,6 @@ impl CarManager {
     pub fn on_peer_disconnect(&mut self) {
         debug!("iPhone gone?");
         if let Some(peer) = self.iphone_peer.take() {
-            // If iPhone happened to disconnect while we were proxying commands
-            // treat this as a hard sanity error
             // Dropping each proxy task now resolves its radio command explicitly.
             drop(peer.car_to_iphone_proxy);
             warn!("modes.on_peer_disconnect()");
@@ -792,6 +790,9 @@ fn restrict_to_main_display(displays: &mut Vec<Display>, hid_devices: &mut Vec<H
             .any(|display| display.uuid == hid.display_uuid)
     });
 }
+#[cfg(test)]
+#[path = "handover_integration.rs"]
+mod handover_integration;
 
 impl Drop for CarManager {
     fn drop(&mut self) {

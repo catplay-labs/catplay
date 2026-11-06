@@ -59,9 +59,11 @@ mimalloc = { version = "0.1.46", optional = true, default-features = false }
 
 [dev-dependencies]
 insta = "1.44.3"
+catplay_tokio = { path = "../../async/catplay_tokio" }
 
 [target.'cfg(not(target_arch = "riscv32"))'.dependencies]
 tikv-jemallocator = { version = "0.7.0", optional = true, default-features = false }
 tikv-jemalloc-sys = { version = "0.7.0", optional = true, features = [
     "override_allocator_on_supported_platforms",
 ] }
+
