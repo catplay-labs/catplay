@@ -7,8 +7,8 @@ use std::{
 use catplay_bonjour::BonjourEntry;
 use catplay_carplay::{
     carplay_tx::{
-        AirPlayTransmitterBootstrap, AirPlayTransmitterBootstrapError, AirPlayTransmitterBootstrapResult, AirPlayTransmitterProxy,
-        AirPlayTransmitterProxyRef, AirPlayTransmitterSessionError, TeardownGuard,
+        AirPlayTransmitter, AirPlayTransmitterBootstrap, AirPlayTransmitterBootstrapError, AirPlayTransmitterBootstrapResult,
+        AirPlayTransmitterProxy, AirPlayTransmitterProxyRef, AirPlayTransmitterSessionError, TeardownGuard,
     },
     common::AirPlayBonjourEntry,
     ctrl::CarPlayCtrlServer,
@@ -24,6 +24,11 @@ use catplay_util::{
 use log::{debug, error, info, warn};
 
 use crate::carplay_client_session::CarPlayClientSession;
+use catplay_util::handover_trace::{self as trace, Stage};
+
+#[path = "session_reconnect.rs"]
+mod session_reconnect;
+use session_reconnect::SessionReconnect;
 
 /// CarPlay transmitter (iPhone)
 pub struct CarPlayUsbClientGadget {
@@ -40,6 +45,8 @@ pub struct CarPlayUsbClientGadget {
     pending_error: Option<AirPlayTransmitterBootstrapError>,
     pending_transmitter: Option<AirPlayTransmitterProxyRef>,
     pending_transmitter_error: Option<AirPlayTransmitterSessionError>,
+    active_transmitter: Option<AirPlayTransmitterProxyRef>,
+    reconnect: SessionReconnect<BonjourEntry<AirPlayBonjourEntry>>,
 
     transmitting: Arc<Mutex<bool>>,
     transmitting_end_notify: Notify,
@@ -69,6 +76,8 @@ impl CarPlayUsbClientGadget {
                 pending_transmitter: None,
                 pending_error: None,
                 pending_transmitter_error: None,
+                active_transmitter: None,
+                reconnect: SessionReconnect::default(),
                 transmitting: Default::default(),
                 transmitting_end_notify: Default::default(),
             },
@@ -154,8 +163,32 @@ impl CarPlayUsbClientGadget {
         self.transmitting_end_notify.notify();
     }
 
+    async fn close_transmitters(&mut self) {
+        trace::mark(Stage::ClientClose);
+        self.pending_connect.take();
+        self.pending_error.take();
+        self.pending_transmitter_error.take();
+        if let Some(transmitter) = self.pending_transmitter.take() {
+            transmitter.shutdown().await;
+        }
+        if let Some(transmitter) = self.active_transmitter.take() {
+            transmitter.shutdown().await;
+        }
+        self.force_unlock();
+        trace::mark(Stage::ClientClosed);
+    }
+
+    /// Renew only AirPlay/RTSP. The USB role, iAP2 and NCM interface stay intact.
+    pub async fn restart_session(&mut self) {
+        self.close_transmitters().await;
+        self.reconnect.request(Instant::now());
+        self.last_announce = None;
+        info!("Radio-only session restart requested; keeping USB transport connected");
+    }
+
     pub fn pop_transmitter(&mut self) -> Option<TeardownGuard<AirPlayTransmitterProxyRef>> {
         let t = self.pending_transmitter.take()?;
+        self.active_transmitter = Some(t.clone());
 
         let mut transmitting = self.transmitting.lock().unwrap();
 
@@ -179,6 +212,8 @@ impl CarPlayUsbClientGadget {
 
 impl AsyncShutdown for CarPlayUsbClientGadget {
     async fn shutdown(&mut self) {
+        self.close_transmitters().await;
+        self.reconnect.set_session(None);
         if let Some(mut ctrl_server) = self.ctrl_server.take() {
             ctrl_server.shutdown().await;
         }
@@ -211,6 +246,8 @@ impl Reconcilable for CarPlayUsbClientGadget {
 
         if new.is_err() {
             debug!("Cleaning up due to error state");
+            self.close_transmitters().await;
+            self.reconnect.set_session(None);
             if let Some(mut ctrl_server) = self.ctrl_server.take() {
                 ctrl_server.shutdown().await;
             }
@@ -224,6 +261,7 @@ impl Reconcilable for CarPlayUsbClientGadget {
     }
 
     async fn render(&mut self, prev: ClientState, update: Instant) -> ClientState {
+        trace::mark(Stage::ClientRender);
         let Ok(_status) = prev.as_ref() else {
             let err = prev.err().unwrap();
 
@@ -235,13 +273,37 @@ impl Reconcilable for CarPlayUsbClientGadget {
         };
 
         // Reconcile USB gadget
+        trace::mark(Stage::ClientUsb);
         let _ = self.g.reconcile().await;
+        trace::mark(Stage::ClientAfterUsb);
 
         // Health check - USB gadget
         let Ok(g_status) = self.g.state().clone() else {
             let err = self.g.state().as_ref().err().unwrap();
             return CarPlayUsbClientGadgetError::UsbGadgetError(err.clone()).into();
         };
+
+        // Invalidate the remembered endpoint before consuming any old connect result.
+        // An endpoint from a previous USB session must never be retried on a new one.
+        let CarPlayPhoneGadgetStatus::CarPlaySession { ref session_id, .. } = g_status else {
+            self.close_transmitters().await;
+            self.reconnect.set_session(None);
+            self.last_session_id = None;
+            self.last_announce = None;
+            if let Some(mut server) = self.ctrl_server.take() {
+                server.shutdown().await;
+            }
+            return Ok(CarPlayUsbClientGadgetStatus::WaitingForUsbAccessory);
+        };
+        if self.last_session_id.as_ref() != Some(session_id) {
+            self.close_transmitters().await;
+            if let Some(mut server) = self.ctrl_server.take() {
+                server.shutdown().await;
+            }
+            self.reconnect.set_session(Some(session_id));
+            self.last_session_id = Some(session_id.clone());
+            self.last_announce = None;
+        }
 
         // Invite turned into connection attempt and that connection attempt turned into failure.
         // Likely a timeout (overloaded HU) or too old CarPlay version and a failed handshake.
@@ -254,6 +316,7 @@ impl Reconcilable for CarPlayUsbClientGadget {
             self.pending_connect.take();
             match result {
                 Ok(transmitter) => {
+                    self.reconnect.connected();
                     self.pending_transmitter.replace(transmitter);
                 }
                 Err(err) => {
@@ -263,7 +326,11 @@ impl Reconcilable for CarPlayUsbClientGadget {
         }
 
         if let Some(err) = self.pending_error.take() {
-            return Err(err)?;
+            if self.reconnect.requested() {
+                warn!("Radio-only reconnect attempt failed; waiting for retry or fresh invitation");
+            } else {
+                return Err(err)?;
+            }
         }
 
         // Transmitter reached error status after successful handshake, but before being picked up by the user.
@@ -274,13 +341,7 @@ impl Reconcilable for CarPlayUsbClientGadget {
         //     return Err(err)?;
         // }
 
-        let CarPlayPhoneGadgetStatus::CarPlaySession {
-            iface,
-            session_id,
-            ipv6_ll,
-            ..
-        } = g_status
-        else {
+        let CarPlayPhoneGadgetStatus::CarPlaySession { iface, ipv6_ll, .. } = g_status else {
             // CarPlay gadget inactive
             if let Some(mut ctrl_server) = self.ctrl_server.take() {
                 debug!("Shutting down old CarPlayCtrlServer");
@@ -289,15 +350,6 @@ impl Reconcilable for CarPlayUsbClientGadget {
 
             return Ok(CarPlayUsbClientGadgetStatus::WaitingForUsbAccessory);
         };
-
-        if self.last_session_id.as_ref() != Some(&session_id) {
-            debug!("Cleaning up old session");
-            if let Some(mut ctrl_server) = self.ctrl_server.take() {
-                ctrl_server.shutdown().await;
-            }
-
-            self.last_session_id.replace(session_id);
-        }
 
         if self.ctrl_server.is_none() {
             let port = 60000;
@@ -309,42 +361,53 @@ impl Reconcilable for CarPlayUsbClientGadget {
             self.ctrl_server.replace(ctrl_server);
         }
 
+        trace::mark(Stage::ClientInvitePoll);
         if let Some(ctrl_server) = self.ctrl_server.as_mut()
             && let Some(invite) = ctrl_server.pop_invite()
         {
-            match *_status {
-                CarPlayUsbClientGadgetStatus::WaitingForInvite => {
-                    return Ok(CarPlayUsbClientGadgetStatus::Invited { invite: invite.entry });
-                }
-                CarPlayUsbClientGadgetStatus::Invited { .. } | CarPlayUsbClientGadgetStatus::Connecting => {
-                    warn!("Droping excess invite; already connecting")
-                }
-                CarPlayUsbClientGadgetStatus::TransmitterReadyForPickup => warn!("Dropping excess invite; transmitter ready for pick up"),
-                CarPlayUsbClientGadgetStatus::Transmitting => warn!("Droping excess invite; already transmitting"),
-
-                _ => {
-                    warn!("Droping excess invite")
-                }
+            self.reconnect.remember(invite.entry.clone());
+            if self.pending_connect.is_none()
+                && self.pending_transmitter.is_none()
+                && !*self.transmitting.lock().unwrap()
+                && !matches!(_status, CarPlayUsbClientGadgetStatus::Invited { .. })
+            {
+                return Ok(CarPlayUsbClientGadgetStatus::Invited { invite: invite.entry });
             }
+            debug!("Retained latest radio invitation while session is busy");
         }
 
+        trace::mark(Stage::ClientAfterInvite);
         let now = Instant::now();
         if (self.last_announce.is_none() || now - self.last_announce.unwrap() > Self::ANNOUNCE_INTERVAL)
             && let Some(ctrl_server) = self.ctrl_server.as_mut()
         {
             self.last_announce.replace(now);
+            trace::mark(Stage::ClientAnnounce);
             debug!("Forcing ctrl-server announcment");
             if let Err(err) = ctrl_server.force_announce() {
                 warn!("Failed to announce? Error: {err:?}");
             }
         }
 
+        trace::mark(Stage::ClientAfterAnnounce);
         if let CarPlayUsbClientGadgetStatus::Invited { invite } = _status {
             info!("Creating transmitter in response to invite: {invite:?}");
             self.connect_bonjour(invite)?;
             return Ok(CarPlayUsbClientGadgetStatus::Connecting);
         }
 
+        trace::mark(Stage::ClientReconnect);
+        if self.pending_connect.is_none()
+            && self.pending_transmitter.is_none()
+            && !*self.transmitting.lock().unwrap()
+            && let Some(invite) = self.reconnect.take_due(Instant::now())
+        {
+            info!("Reconnecting radio RTSP session on existing USB transport");
+            self.connect_bonjour(&invite)?;
+            return Ok(CarPlayUsbClientGadgetStatus::Connecting);
+        }
+
+        trace::mark(Stage::ClientReturn);
         match () {
             _ if self.pending_transmitter.is_some() => Ok(CarPlayUsbClientGadgetStatus::TransmitterReadyForPickup),
             _ if self.pending_connect.is_some() => Ok(CarPlayUsbClientGadgetStatus::Connecting),
