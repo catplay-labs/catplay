@@ -68,6 +68,16 @@ impl RtpTxPacer {
         }
     }
 
+    /// Freeze the media and UDP schedules for time spent paused.
+    pub(super) fn delay(&mut self, duration: Duration) {
+        if let Some(anchor) = self.anchor.as_mut() {
+            anchor.instant += duration;
+        }
+        if let Some(tat) = self.udp_tat.as_mut() {
+            *tat += duration;
+        }
+    }
+
     pub(super) fn udp_interval(&self) -> Duration {
         self.udp_interval
     }
@@ -247,5 +257,32 @@ mod tests {
         let decision = pacer.inspect(now, [third], 16);
         assert_eq!(decision.permits, 0);
         assert_eq!(decision.wake_at, Some(now + Duration::from_millis(1)));
+    }
+}
+
+#[cfg(test)]
+mod pause_tests {
+    use super::*;
+
+    #[test]
+    fn resume_preserves_remaining_media_delay() {
+        let now = Instant::now();
+        let mut pacer = RtpTxPacer::new(
+            NonZeroU32::new(48_000).unwrap(),
+            Duration::ZERO,
+            Duration::from_millis(1),
+            NonZeroU32::new(4).unwrap(),
+        );
+        pacer.commit(now, [RtpPacketMeta { first_ts: 0, end_ts: 480 }]);
+        let next = RtpPacketMeta {
+            first_ts: 480,
+            end_ts: 960,
+        };
+        let before = pacer.inspect(now, [next], 1).wake_at.unwrap();
+        let paused = Duration::from_secs(10);
+        pacer.delay(paused);
+        assert_eq!(pacer.inspect(now + paused, [next], 1).permits, 0);
+        assert_eq!(pacer.inspect(now + paused, [next], 1).wake_at, Some(before + paused));
+        assert_eq!(pacer.inspect(before + paused, [next], 1).permits, 1);
     }
 }

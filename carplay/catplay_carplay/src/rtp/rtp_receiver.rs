@@ -104,7 +104,7 @@ impl RtpReceiver {
             socket_ctrl.0.connect_finish(rtcp_remote)?;
         }
 
-        if let Some(mut session_tx) = session_tx.take() {
+        if let Some(session_tx) = session_tx.take() {
             debug!("Attaching recorder sink to RTP session");
             let Some(data_port) = d.data_port else {
                 return Err(RtspError::ProtocolViolationGeneric);
@@ -112,7 +112,6 @@ impl RtpReceiver {
 
             let mut rtp_remote = peer_ip;
             rtp_remote.set_port(data_port);
-            session_tx.start_recording();
 
             let (socket, rtp_remote_bind, _) = UdpHelper::connect(rtp_remote, session_tx)?;
             debug!("RTP connect tx: {rtp_remote_bind} -> {rtp_remote}");
@@ -223,7 +222,7 @@ impl RtpReceiver {
 
         encryption = Self::effective_audio_encryption(encryption, d.stream_type, false);
 
-        let mut session = RtpSessionTx::new(
+        let session = RtpSessionTx::new(
             encryption,
             d.stream_connection_id,
             d.stream_type,
@@ -234,8 +233,6 @@ impl RtpReceiver {
         )?;
         let mut rtp_remote = peer_ip;
         rtp_remote.set_port(d.data_port);
-
-        session.start_recording();
 
         if let Some(socket_ctrl) = self.socket_ctrl.as_mut()
             && let Some(control_port) = d.control_port

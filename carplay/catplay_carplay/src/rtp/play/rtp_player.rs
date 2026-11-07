@@ -66,11 +66,12 @@ impl<T: AudioDecoder> RtpPlayer<T> {
         self._play.replace(Instant::now());
     }
 
-    pub fn should_play(&mut self) -> bool {
-        match self.start {
-            None => false,
-            Some(v) => Instant::now() - v >= self.buffer_ms,
-        }
+    pub fn start_deadline(&self) -> Option<Instant> {
+        self.start.map(|start| start + self.buffer_ms)
+    }
+
+    pub fn total_written(&mut self) -> usize {
+        self.ring.stat().written
     }
 
     // pub fn feedback(&mut self) -> (usize, Instant) {
@@ -237,7 +238,8 @@ impl<T: AudioDecoder> RtpPlayer<T> {
             // Fallback to silence
             let gap_samples = gap_frames * frame_size_in_samples.get();
             debug!("Writing silence {gap_frames} x {frame_size_in_samples} = {gap_samples}");
-            self.ring.write_default(gap_samples);
+            // self.ring.write_default(gap_samples);
+            self.ring.advance_timeline(gap_samples);
             break;
         }
     }

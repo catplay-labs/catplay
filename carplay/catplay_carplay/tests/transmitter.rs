@@ -5,7 +5,10 @@ use std::{
 
 use async_trait::async_trait;
 use catplay_carplay::{
-    audio::{AudioPlayer, AudioPlayerBox, AudioRecorder, AudioRecorderBox, AudioSinkBox, AudioSourceBox, AudioStreamBasicDescription},
+    audio::{
+        AudioPlayer, AudioPlayerBox, AudioPlayerEvent, AudioRecorder, AudioRecorderBox, AudioRecorderControl, AudioRecorderEvent,
+        AudioStreamBasicDescription, RingConsumer, RingProducer,
+    },
     carplay_rx::{
         AirPlayReceiverProfile, AirPlayReceiverSink,
         sink::{AirPlayReceiver, AirPlayServerShared},
@@ -36,25 +39,21 @@ struct MockPlayer {}
 impl AudioRecorder for MockRecorder {
     type Sample = i16;
 
-    fn init(&mut self, source: AudioSinkBox<Self::Sample>) -> RtspResult<()> {
+    fn init(&mut self, _ring: RingProducer<i16>, _format: AudioStreamBasicDescription, _control: AudioRecorderControl) -> RtspResult<()> {
         Ok(())
     }
 
-    fn start(&mut self) {}
-
-    fn stop(&mut self, drain: bool) {}
+    fn on_event(&mut self, _event: AudioRecorderEvent) {}
 }
 
 impl AudioPlayer for MockPlayer {
     type Sample = i16;
 
-    fn init(&mut self, source: AudioSourceBox<Self::Sample>) -> RtspResult<()> {
+    fn init(&mut self, _ring: RingConsumer<i16>, _format: AudioStreamBasicDescription) -> RtspResult<()> {
         Ok(())
     }
 
-    fn start(&mut self) {}
-
-    fn stop(&mut self, drain: bool) {}
+    fn on_event(&mut self, _event: AudioPlayerEvent) {}
 }
 
 #[async_trait]

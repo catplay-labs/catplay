@@ -78,10 +78,10 @@ impl<T: AudioEncoder> RtpRecorder<T> {
             sample_rate,
             // Enforce real-time pacing except for MainHighAudio.
             if stream_type == StreamType::MainHighAudio {
-                    Duration::from_millis(150)
-                } else {
-                    Duration::ZERO
-                },
+                Duration::from_millis(150)
+            } else {
+                Duration::ZERO
+            },
             Self::udp_interval(sample_rate, samples_per_packet.get() / frame_size_in_samples.get()),
             NonZeroU32::new(4).unwrap(),
         );
@@ -115,6 +115,14 @@ impl<T: AudioEncoder> RtpRecorder<T> {
         // recover from scheduling delays. Count frames, not interleaved samples.
         let ns = (packet_frames as u128 * 1_000_000_000) / (sample_rate.get() as u128 * 2);
         Duration::from_nanos(ns.min(1_000_000) as u64)
+    }
+
+    pub fn total_consumed(&mut self) -> usize {
+        self.ring.stat().consumed
+    }
+
+    pub fn delay_pacing(&mut self, duration: Duration) {
+        self.pacer.delay(duration);
     }
 
     pub fn latency_ms(&self) -> u64 {
@@ -179,7 +187,11 @@ impl<T: AudioEncoder> RtpRecorder<T> {
     }
 
     pub fn _drop_packets_older_than_ts(&mut self, ts: u64) {
-        while self.pending_transmit.front().is_some_and(|packet| packet.meta.first_ts < ts) {
+        while self
+            .pending_transmit
+            .front()
+            .is_some_and(|packet| packet.meta.first_ts < ts)
+        {
             let packet = self.pending_transmit.pop_front().unwrap();
             self.empty_buffers.push_back(packet.buffer);
         }
@@ -194,7 +206,7 @@ impl<T: AudioEncoder> RtpRecorder<T> {
         let packet_ts = (packet_samples / self.frame_size_in_samples.get()) as u64;
         self.ts += packets as u64 * packet_ts;
         let samples_to_commit = packets * packet_samples;
-        
+
         self.ring.read_commit(samples_to_commit);
     }
 
@@ -209,29 +221,26 @@ impl<T: AudioEncoder> RtpRecorder<T> {
             // One transaction per packet: incomplete input stays unread, while
             // a failed encode consumes the packet and advances its timestamp.
             let mut segments = self.ring.iter_segments(packet_samples, false);
+            let mut samples_to_skip = packet_samples;
             let frames = match segments.next() {
-                Some(RingSegment::Data(frames)) if frames.len() == packet_samples => frames,
-                Some(RingSegment::Data(_)) => {
-                    // A short Data segment either ends at the current write head
-                    // (wait for more samples), or at a gap (skip this packet).
-                    let followed_by_gap = matches!(segments.next(), Some(RingSegment::Gap(_)));
-                    segments.drop_without_commit();
-                    if followed_by_gap {
-                        self.rewind_rounding(packet_samples);
-                        continue;
-                    }
-                    break;
-                }
+                Some(RingSegment::Data(frames)) if frames.len() == packet_samples => Some(frames),
+                // A short Data segment followed by a gap skips this packet.
+                Some(RingSegment::Data(_)) if matches!(segments.next(), Some(RingSegment::Gap(_))) => None,
                 Some(RingSegment::Gap(n)) | Some(RingSegment::Overflow(n)) => {
                     warn!("Missing audio during recording; skipping at least {n} samples");
-                    segments.drop_without_commit();
-                    self.rewind_rounding(n);
-                    continue;
+                    samples_to_skip = n;
+                    None
                 }
-                None => {
+                Some(RingSegment::Data(_)) | None => {
+                    segments.drop_without_commit();
                     break;
                 }
                 Some(RingSegment::Underflow(_)) => unreachable!("underflow emission is disabled"),
+            };
+            let Some(frames) = frames else {
+                segments.drop_without_commit();
+                self.rewind_rounding(samples_to_skip);
+                continue;
             };
 
             let buffer = self.empty_buffers.front_mut().unwrap();
@@ -600,10 +609,9 @@ pub(super) mod tests {
         producer.write(&vec![0; 960 * 2]);
         recorder.encode_all().unwrap();
         let wake_at = recorder
-            .drain_encoded_with_clock(
-                &mut |_| panic!("rewinding the timestamp must not bypass media pacing"),
-                || start + Duration::from_millis(10),
-            )
+            .drain_encoded_with_clock(&mut |_| panic!("rewinding the timestamp must not bypass media pacing"), || {
+                start + Duration::from_millis(10)
+            })
             .unwrap();
         assert_eq!(wake_at, Some(start + Duration::from_millis(30)));
         assert_eq!(recorder.pacer.last_end_ts(), Some(previous));
