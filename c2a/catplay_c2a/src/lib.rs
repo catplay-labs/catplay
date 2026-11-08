@@ -1,6 +1,8 @@
 #![recursion_limit = "256"]
 
 mod config;
+mod hardware_controls;
+mod hardware_logic;
 mod cp_output_manager;
 mod homekit_manager;
 mod main_init;
