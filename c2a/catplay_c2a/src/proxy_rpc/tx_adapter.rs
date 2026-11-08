@@ -11,15 +11,22 @@ use catplay_carplay::{
 use catplay_util::{mpsc, oneshot};
 use log::{debug, info, warn};
 
+use super::PhoneLease;
 use crate::proxy_rpc::{ScreenProxyOp, proxy_screen::ScreenProxy};
 
 pub struct TxAdapter {
     car: mpsc::UnboundedSender<TxAdapterOp>,
+    lease: PhoneLease,
     pending_mic: Option<AudioRecorderBox<i16>>,
     handle: Option<AirPlayReceiverHandleRef>,
 }
 
 pub enum TxAdapterOp {
+    Phone { lease: PhoneLease, op: PhoneOp },
+    BeginHandover { ready: oneshot::Sender<RtspResult<()>> },
+}
+
+pub enum PhoneOp {
     IphoneConnected {
         handle: AirPlayReceiverHandleRef,
     },
@@ -60,22 +67,34 @@ pub enum TxAdapterOp {
 }
 
 impl TxAdapter {
-    pub fn new(car: mpsc::UnboundedSender<TxAdapterOp>) -> Self {
+    pub(crate) fn new(car: mpsc::UnboundedSender<TxAdapterOp>, lease: PhoneLease) -> Self {
         Self {
             car,
+            lease,
             pending_mic: None,
             handle: None,
         }
     }
 
+    pub fn live(&self) -> bool {
+        self.lease.live()
+    }
+
+    fn send(&self, op: PhoneOp) {
+        let _ = self.car.unbounded_send(TxAdapterOp::Phone {
+            lease: self.lease.clone(),
+            op,
+        });
+    }
+
     pub async fn proxy_cmd_and_spy(&mut self, command: &Command) -> RtspResult<RtspResponse> {
         // Received over Wi-Fi; blocks RTSP thread
         let os = oneshot::channel();
-        let op = TxAdapterOp::Command {
+        let op = PhoneOp::Command {
             command: command.clone(),
             response: os.0,
         };
-        let _ = self.car.unbounded_send(op);
+        self.send(op);
         os.1.await.map_err(|_| RtspError::Closed)
     }
 
@@ -89,7 +108,7 @@ impl TxAdapter {
         duplex: bool,
     ) -> RtspResult<AudioPlayerBox<i16>> {
         let os = oneshot::channel();
-        let _ = self.car.unbounded_send(TxAdapterOp::SetupAudio {
+        self.send(PhoneOp::SetupAudio {
             latency,
             stream_type,
             audio_type,
@@ -120,13 +139,17 @@ impl TxAdapter {
     }
 
     pub async fn proxy_record(&mut self) -> RtspResult<()> {
-        info!("iPhone has notified about RECORD (ignored for now)");
+        if !self.lease.live() {
+            return Err(RtspError::Closed);
+        }
+        self.lease.record();
+        info!("iPhone RECORD confirmed for active session");
         Ok(())
     }
 
     pub async fn proxy_info(&mut self, info: &mut InfoMessageResponse) {
         let os = oneshot::channel();
-        let _ = self.car.unbounded_send(TxAdapterOp::PatchInfo {
+        self.send(PhoneOp::PatchInfo {
             info: info.clone(),
             patched: os.0,
         });
@@ -143,24 +166,20 @@ impl TxAdapter {
     pub async fn proxy_screen(&mut self, _latency: Duration) -> RtspResult<ScreenReceiverSinkBox> {
         let screen = ScreenProxy::new(self.handle.clone().expect("handle missing"));
         let channel = screen.1;
-        let _ = self
-            .car
-            .unbounded_send(TxAdapterOp::ScreenChannel { channel });
+        self.send(PhoneOp::ScreenChannel { channel });
         Ok(Box::new(screen.0))
     }
 
     pub async fn proxy_alt_screen(&mut self, _latency: Duration, uuid: Option<String>) -> RtspResult<ScreenReceiverSinkBox> {
         let screen = ScreenProxy::new(self.handle.clone().expect("handle missing"));
         let channel = screen.1;
-        let _ = self
-            .car
-            .unbounded_send(TxAdapterOp::AltScreenChannel { channel, uuid });
+        self.send(PhoneOp::AltScreenChannel { channel, uuid });
         Ok(Box::new(screen.0))
     }
 
     pub async fn proxy_features(&mut self, offered: &[ControllerFeature]) -> Vec<ControllerFeature> {
         let os = oneshot::channel();
-        let _ = self.car.unbounded_send(TxAdapterOp::NegotiateFeatures {
+        self.send(PhoneOp::NegotiateFeatures {
             offered: offered.into(),
             enabled: os.0,
         });
@@ -170,23 +189,20 @@ impl TxAdapter {
     pub fn on_init(&mut self, handle: AirPlayReceiverHandleRef) {
         // TODO move to initial setup
 
-        let _ = self
-            .car
-            .unbounded_send(TxAdapterOp::IphoneConnected { handle: handle.clone() });
+        self.send(PhoneOp::IphoneConnected { handle: handle.clone() });
         self.handle.replace(handle);
     }
 
     pub async fn on_shutdown(&mut self) {}
 
     pub fn on_drop(&mut self) {
-        let _ = self.car.unbounded_send(TxAdapterOp::IphoneDisconnected {});
+        self.lease.end();
+        self.send(PhoneOp::IphoneDisconnected);
     }
 
     pub async fn on_modes(&mut self, modes: AirPlayModeState) {
         let os = oneshot::channel();
-        let _ = self
-            .car
-            .unbounded_send(TxAdapterOp::Modes { modes, consumed: os.0 });
+        self.send(PhoneOp::Modes { modes, consumed: os.0 });
         let _ = os.1.await;
     }
 }

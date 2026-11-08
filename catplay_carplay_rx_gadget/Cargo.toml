@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+catplay_bt = { path = "../bluetooth/catplay_bt" }
 catplay_iap2_usb_host = { path = "../usb/catplay_iap2_usb_host" }
 catplay_iap2_usb = { path = "../usb/catplay_iap2_usb" }
 catplay_iap2_usb_gadget = { path = "../usb/catplay_iap2_usb_gadget", optional = true }

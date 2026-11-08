@@ -448,4 +448,30 @@ impl BluezManager {
 
         Ok(())
     }
+
+    /// Paired iAP2 phones on this adapter, excluding unrelated Bluetooth devices.
+    pub async fn paired_iphones(&self, adapter: &str) -> BluezResult<Vec<MacAddr6>> {
+        let conn = Self::open_client_connection().await?;
+        let proxy = Proxy::new("org.bluez", "/", Duration::from_secs(5), conn.conn.clone());
+        type Objects = HashMap<dbus::Path<'static>, HashMap<String, dbus::arg::PropMap>>;
+        let (objects,): (Objects,) = proxy.method_call("org.freedesktop.DBus.ObjectManager", "GetManagedObjects", ()).await?;
+        let mut phones: Vec<MacAddr6> = Vec::new();
+        for (path, interfaces) in objects {
+            let Some((hci, mac)) = bluez_parse_path(&path) else { continue };
+            if hci != adapter { continue; }
+            let Some(props) = interfaces.get("org.bluez.Device1") else { continue };
+            let paired = ["Paired", "Bonded"].iter().any(|name| {
+                props.get(*name).and_then(|v| v.0.as_u64()) == Some(1)
+            });
+            let iap2 = props.get("UUIDs").and_then(|v| v.0.as_iter()).is_some_and(|mut uuids| {
+                uuids.any(|uuid| uuid.as_str().is_some_and(|uuid| {
+                    [IAP_CLIENT_UUID, IAP_SERVER_UUID, IAP_V2_UUID].iter().any(|known| uuid.eq_ignore_ascii_case(known))
+                }))
+            });
+            if paired && iap2 && let Ok(mac) = mac.parse() { phones.push(mac); }
+        }
+        phones.sort_by_key(|mac| mac.to_string());
+        phones.dedup();
+        Ok(phones)
+    }
 }

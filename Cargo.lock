@@ -310,6 +310,7 @@ dependencies = [
  "catplay_iap2_usb",
  "catplay_iap2_usb_host",
  "catplay_mfi",
+ "catplay_tokio",
  "catplay_tracing",
  "catplay_tracing_macro",
  "catplay_util",
@@ -368,6 +369,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "catplay_bonjour",
+ "catplay_bt",
  "catplay_carplay",
  "catplay_csm",
  "catplay_hap",

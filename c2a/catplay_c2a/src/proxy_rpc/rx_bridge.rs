@@ -42,7 +42,7 @@ impl CarPlayRxSession {
     }
 
     fn reject_if_needed(&mut self) -> RtspResult<()> {
-        if self.reject {
+        if self.reject || self.tx.as_ref().is_some_and(|tx| !tx.live()) {
             return Err(RtspError::UnexpectedState("no TX session while RX has connected".into()));
         }
         Ok(())

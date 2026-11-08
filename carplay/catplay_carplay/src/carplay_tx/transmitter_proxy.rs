@@ -121,18 +121,14 @@ impl AirPlayTransmitter for AirPlayTransmitterProxy {
     }
 
     async fn closed(&self) -> AirPlayTransmitterSessionError {
-        let mut closed = self.closed.subscribe();
-
-        while closed.changed().await.is_ok() {
-            if let Some(err) = closed.borrow().clone() {
-                return err.clone();
-            }
-        }
-
-        AirPlayTransmitterSessionError::Disconnected(RtspError::Closed)
+        super::session_lifecycle::wait_for_close(self.closed.subscribe())
+            .await
+            .unwrap_or(AirPlayTransmitterSessionError::Disconnected(RtspError::Closed))
     }
 
     async fn shutdown(&self) {
+        // Other holders of this proxy must not keep the old RTSP socket alive.
+        self.raw_client.close_connection();
         if self.closed.borrow().is_none() {
             self.closed
                 .send_replace(Some(AirPlayTransmitterSessionError::Disconnected(RtspError::Closed)));
@@ -141,7 +137,8 @@ impl AirPlayTransmitter for AirPlayTransmitterProxy {
         let handle = self.task.lock().unwrap().take();
         if let Some(handle) = handle {
             handle.abort();
-            handle.await.unwrap();
+            // Cancellation is expected after abort, not a process-level panic.
+            let _ = handle.await;
         }
     }
 
@@ -251,5 +248,15 @@ impl AirPlayTransmitter for AirPlayTransmitterProxy {
             Err(_) => Err(RtspError::Closed),
             Ok(v) => v,
         }
+    }
+
+    async fn release_phone_streams(&self) -> RtspResult<()> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.schedule(move |t| {
+            Box::pin(async move {
+                let _ = tx.send(t.release_phone_streams().await);
+            })
+        });
+        rx.await.unwrap_or(Err(RtspError::Closed))
     }
 }

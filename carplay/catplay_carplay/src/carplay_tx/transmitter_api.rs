@@ -141,6 +141,9 @@ pub trait AirPlayTransmitter: Send + 'static {
 
     /// Drain TEARDOWN queue populated by dropping stream guards/proxies.
     async fn drain_teardown_queue(&self) -> RtspResult<()>;
+
+    /// Release old phone media while preserving the radio's control session.
+    async fn release_phone_streams(&self) -> RtspResult<()>;
 }
 
 pub type AirPlayTransmitterBox = Box<dyn AirPlayTransmitter>;

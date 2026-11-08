@@ -7,6 +7,8 @@ use macaddr::MacAddr6;
 use tokio::select;
 
 use crate::ctrl::{CarPlayCtrlBonjourEntry, CarPlayCtrlClient};
+#[path = "control_target.rs"]
+pub(super) mod control_target;
 
 /// Keeps sending CarPlay invites to iPhones, until the struct is dropped.
 pub struct CarPlayInviter {
@@ -23,7 +25,17 @@ impl CarPlayInviter {
     }
 
     pub fn with_bonjour(bonjour: &Bonjour, mac_addr: MacAddr6, entry: BonjourEntryHandle) -> Self {
-        let task = spawn(Self::work(bonjour.clone(), mac_addr, entry.clone()));
+        Self::with_target(bonjour, mac_addr, entry, None, None)
+    }
+
+    pub(crate) fn with_target(
+        bonjour: &Bonjour,
+        mac_addr: MacAddr6,
+        entry: BonjourEntryHandle,
+        target: Option<MacAddr6>,
+        peers: Option<(control_target::TargetPeers, control_target::PeerScope)>,
+    ) -> Self {
+        let task = spawn(Self::work(bonjour.clone(), mac_addr, entry.clone(), target, peers));
 
         Self {
             _bonjour: bonjour.clone(),
@@ -33,7 +45,13 @@ impl CarPlayInviter {
         }
     }
 
-    async fn work(bonjour: Bonjour, mac_addr: MacAddr6, entry: BonjourEntryHandle) {
+    async fn work(
+        bonjour: Bonjour,
+        mac_addr: MacAddr6,
+        entry: BonjourEntryHandle,
+        target: Option<MacAddr6>,
+        peers: Option<(control_target::TargetPeers, control_target::PeerScope)>,
+    ) {
         const TIMEOUT: Duration = Duration::from_secs(3);
         const MAX_ATTEMPTS: usize = 5;
         const RETRY_DELAY: Duration = Duration::from_millis(1000);
@@ -42,15 +60,31 @@ impl CarPlayInviter {
 
         debug!("Watching for clients");
         let mut recv = bonjour.watch::<CarPlayCtrlBonjourEntry>();
+        let target = target.map(|mac| mac.to_string());
 
         // Possibly sleep here after watch is started to differentiate between 1 vs >1 phones on first iteration?
 
         loop {
             let b = recv.borrow().clone();
             // Forcefully select first phone for now
-            let phone = b.iter().next();
+            let phone = b
+                .iter()
+                .find(|(_, phone)| control_target::matches_target(&phone.entry.data.id, target.as_deref()));
 
             if let Some(phone) = phone {
+                if let Some((peers, scope)) = peers.as_ref() {
+                    peers.update(
+                        scope,
+                        phone
+                            .1
+                            .entry
+                            .meta
+                            .addrs
+                            .iter()
+                            .map(|addr| addr.ip())
+                            .collect(),
+                    );
+                }
                 // For some reason, iPhone often loses or discards our initial Bonjour advertisement
                 // and then invites get accepted but never result in any connections.
                 // This is easily reproducible if Wi-Fi connects before Bluetooth does,
