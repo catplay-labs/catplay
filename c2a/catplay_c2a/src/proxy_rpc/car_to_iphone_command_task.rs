@@ -8,10 +8,29 @@ use std::{
 use catplay_carplay::{
     carplay_rx::AirPlayReceiverHandleRef,
     events::CommandPending,
+    modes::ChangeModesResponse,
     msg::{Command, CommandType},
-    rtsp_frame::{RtspError, RtspFuture, RtspResponse},
+    rtsp_frame::{HttpStatus, RtspError, RtspFuture, RtspResponse},
 };
 use log::{error, info};
+
+pub(super) fn recover_phone_command(cmd: &mut CommandPending) {
+    if cmd.is_complete() {
+        return;
+    }
+    match cmd.command().get_type() {
+        CommandType::ForceKeyFrame
+        | CommandType::RequestSiri
+        | CommandType::RequestUI
+        | CommandType::SetNightMode
+        | CommandType::SetLimitedUI
+        | CommandType::HidSendReport => cmd.respond_ok(),
+        CommandType::ChangeModes => {
+            let _ = cmd.respond_plist(HttpStatus::Ok, ChangeModesResponse::error(2));
+        }
+        _ => cmd.respond_err(),
+    }
+}
 
 pub(super) struct CarToIphoneCommandTask {
     phone: AirPlayReceiverHandleRef,
@@ -96,6 +115,14 @@ impl Future for CarToIphoneCommandTask {
                     .close(RtspError::UnexpectedState("Sanity violation: command timeout".into()));
                 Poll::Ready(this.take_output(None))
             }
+        }
+    }
+}
+
+impl Drop for CarToIphoneCommandTask {
+    fn drop(&mut self) {
+        if let Some(mut cmd) = self.cmd.take() {
+            recover_phone_command(&mut cmd);
         }
     }
 }

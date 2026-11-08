@@ -84,6 +84,16 @@ impl OverlayManager {
         self.iphone_peer = iphone;
     }
 
+    pub fn prepare_phone_handover(&mut self) {
+        self.iphone_peer = None;
+        self.iphone_screen_rx = None;
+        self.iphone_screen_active = false;
+        self.lazy_screen.take();
+        self.clear_render_queue();
+        self.overlay_current = None;
+        self.overlay_last_keyframe = None;
+    }
+
     pub fn set_iphone_peer_screen(&mut self, screen: Option<mpsc::UnboundedReceiver<ScreenProxyOp>>) {
         self.iphone_screen_rx = screen;
         self.iphone_screen_active = false;
