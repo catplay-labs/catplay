@@ -30,9 +30,7 @@ impl AudioProxyUtil {
 
         // Open a proxy audio stream towards the car
 
-        let rate = pcm_format.sample_rate;
-
-        let audio_pair = PcmProxyPlayer::pair(rate, pcm_format.channels_per_frame as _);
+        let audio_pair = PcmProxyPlayer::pair();
         let mut mic_player = None;
         let mut pending_mic = None;
 
@@ -40,7 +38,7 @@ impl AudioProxyUtil {
             // If audio type is Telephony or SpeechRecognition, open a duplex stream with a microphone too
             // in such case, `open_microphone` will follow `open_audio` (that order is a small implementation detail)
             // and we will have an instance of AudioRecorder to return as a microphone proxy
-            let p = PcmProxyPlayer::pair(rate, pcm_format.channels_per_frame as _);
+            let p = PcmProxyPlayer::pair();
             pending_mic.replace(Box::new(p.1) as _);
             mic_player.replace(Box::new(p.0) as _);
         }
