@@ -93,8 +93,8 @@ impl<'a, T> fmt::Display for RingSegment<'a, T> {
 /// Underflow advances time. Samples written later for that time are obsolete
 /// and must be ignored to preserve a monotonic playback timeline.
 ///
-/// The caller may zero-fill or otherwise handle missing portions of the output buffer
-/// based on the offsets reported in [`XRunReport`].
+/// [`RingBuffer::read`] fills missing samples with `T::default()` and reports
+/// overflow, gaps, and underflow separately in [`XRunReport`].
 pub struct RingBuffer<T: Copy + Default> {
     ring: UnsafeCell<RingStorage<T>>,
 
@@ -182,11 +182,14 @@ pub struct XRunReport {
     // but were missing (read pointer had to skip ahead).
     pub overflow: usize,
 
-    /// Samples that were actually copied from the ring buffer.
+    /// Samples actually copied from the ring buffer.
     pub copied: usize,
 
+    /// Timeline gap samples filled with `T::default()`, anywhere in the readable region.
+    pub gaps: usize,
+
     /// Samples that were requested but could not be read
-    /// because the buffer ran dry.
+    /// because the buffer ran dry. These occupy only the trailing output region.
     pub underflow: usize,
 }
 
@@ -194,35 +197,6 @@ pub struct XRunReport {
 pub enum WriteReport {
     Ok,
     Partial { written: usize },
-}
-
-impl XRunReport {
-    pub fn zero_fill_overflow_and_underflow<T: Zeroable>(&self, out: &mut [T]) {
-        fn fill_slice<T>(buf: &mut [T]) {
-            unsafe {
-                std::ptr::write_bytes(buf.as_mut_ptr(), 0, buf.len());
-            }
-        }
-
-        fill_slice(self.overflow_slice_mut(out));
-        fill_slice(self.underflow_slice_mut(out));
-    }
-
-    pub fn overflow_slice<'a, T>(&self, data: &'a [T]) -> &'a [T] {
-        &data[..self.overflow]
-    }
-
-    pub fn overflow_slice_mut<'a, T>(&self, data: &'a mut [T]) -> &'a mut [T] {
-        &mut data[..self.overflow]
-    }
-
-    pub fn underflow_slice<'a, T>(&self, data: &'a [T]) -> &'a [T] {
-        &data[self.overflow + self.copied..self.overflow + self.copied + self.underflow]
-    }
-
-    pub fn underflow_slice_mut<'a, T>(&self, data: &'a mut [T]) -> &'a mut [T] {
-        &mut data[self.overflow + self.copied..self.overflow + self.copied + self.underflow]
-    }
 }
 
 #[allow(clippy::missing_safety_doc)]
@@ -543,6 +517,11 @@ impl<T: Copy + Default> RingBuffer<T> {
         self.write_commit_advance(written_phys, repeat);
     }
 
+    /// Reads the timeline into `out`, filling overflow, gaps, and underflow
+    /// with `T::default()`. Returns an [`XRunReport`] if any of these occurred.
+    /// 
+    /// To obtain the positions of individual gaps, consume the timeline using
+    /// [`Self::iter_segments`] instead of this method.
     pub fn read(&self, out: &mut [T]) -> Result<(), XRunReport> {
         let requested = out.len();
         if requested == 0 {
@@ -551,6 +530,7 @@ impl<T: Copy + Default> RingBuffer<T> {
 
         let mut copied = 0usize;
         let mut overflow = 0usize;
+        let mut gaps = 0usize;
         let mut underflow = 0usize;
         let mut cursor = 0usize;
 
@@ -562,11 +542,17 @@ impl<T: Copy + Default> RingBuffer<T> {
                 cursor += len;
             }
             RingSegment::Overflow(n) => {
+                out[cursor..cursor + n].fill(T::default());
                 overflow += n;
                 cursor += n;
             }
-            RingSegment::Gap(n) | RingSegment::Underflow(n) => {
-                // `read()` reports timeline holes as underflow so callers can fill silence.
+            RingSegment::Gap(n) => {
+                out[cursor..cursor + n].fill(T::default());
+                gaps += n;
+                cursor += n;
+            }
+            RingSegment::Underflow(n) => {
+                out[cursor..cursor + n].fill(T::default());
                 underflow += n;
                 cursor += n;
             }
@@ -574,15 +560,16 @@ impl<T: Copy + Default> RingBuffer<T> {
 
         #[cfg(test)]
         {
-            debug_assert_eq!(overflow + copied + underflow, requested);
+            debug_assert_eq!(overflow + copied + gaps + underflow, requested);
             debug_assert_eq!(cursor, requested);
         }
 
-        if overflow == 0 && underflow == 0 {
+        if overflow == 0 && gaps == 0 && underflow == 0 {
             Ok(())
         } else {
             Err(XRunReport {
                 copied,
+                gaps,
                 overflow,
                 underflow,
             })
@@ -1010,15 +997,16 @@ mod tests {
     }
 
     #[test]
-    fn test_zero_fill_with_underflow() {
+    fn test_read_fills_overflow_and_underflow() {
         let rb = RingBuffer::<i16>::new_unsplit(2);
         assert_eq!(rb.write(&[1, 2, 3, 4, 5, 6, 7, 8]), WriteReport::Partial { written: 2 });
 
-        let mut out = [0; 4];
+        let mut out = [9; 4];
         assert_eq!(
             rb.read(&mut out).unwrap_err(),
             XRunReport {
                 copied: 0,
+                gaps: 0,
                 underflow: 0,
                 overflow: 4
             }
@@ -1028,37 +1016,86 @@ mod tests {
         let mut out = [9; 7];
         let report = XRunReport {
             copied: 2,
+            gaps: 0,
             underflow: 3,
             overflow: 2,
         };
         assert_eq!(rb.read(&mut out).unwrap_err(), report);
-        assert_eq!(out, [9, 9, 7, 8, 9, 9, 9]);
-
-        report.zero_fill_overflow_and_underflow(&mut out);
         assert_eq!(&out[..], &[0, 0, 7, 8, 0, 0, 0]);
     }
 
     #[test]
-    fn test_read_maps_gap_to_underflow_for_zero_fill() {
+    fn test_read_fills_trailing_gap_without_underflow() {
         let rb = RingBuffer::<i16>::new_unsplit(8);
         rb.write(&[1, 2, 3, 4]);
         rb.advance_timeline(3);
 
         let mut out = [9; 7];
-        let report = rb.read(&mut out).unwrap_err();
-
         assert_eq!(
-            report,
-            XRunReport {
-                copied: 4,
-                overflow: 0,
-                underflow: 3,
-            }
+            rb.read(&mut out),
+            Err(XRunReport { copied: 4, gaps: 3, overflow: 0, underflow: 0 })
         );
-        assert_eq!(out, [1, 2, 3, 4, 9, 9, 9]);
-
-        report.zero_fill_overflow_and_underflow(&mut out);
         assert_eq!(out, [1, 2, 3, 4, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_read_fills_multiple_gaps_and_reports_only_trailing_underflow() {
+        let rb = RingBuffer::<i16>::new_unsplit(16);
+        rb.advance_timeline(1);
+        rb.write(&[1, 2]);
+        rb.advance_timeline(2);
+        rb.write(&[3]);
+        rb.advance_timeline(1);
+        rb.write(&[4, 5]);
+
+        let mut out = [9; 11];
+        let report = rb.read(&mut out).unwrap_err();
+        assert_eq!(report, XRunReport { copied: 5, gaps: 4, overflow: 0, underflow: 2 });
+        assert_eq!(out, [0, 1, 2, 0, 0, 3, 0, 4, 5, 0, 0]);
+        assert_eq!(rb.total_consumed(), 11);
+
+        rb.write(&[6, 7, 8]);
+        let mut next = [9];
+        assert_eq!(rb.read(&mut next), Ok(()));
+        assert_eq!(next, [8]);
+    }
+
+    #[test]
+    fn test_read_gap_across_wrap_with_overflow_and_underflow() {
+        let rb = RingBuffer::<i16>::new_unsplit(8);
+        rb.write(&[1, 2, 3, 4, 5, 6, 7]);
+        rb.advance_timeline(2);
+        rb.write(&[8, 9]);
+
+        let mut out = [99; 13];
+        let report = rb.read(&mut out).unwrap_err();
+        assert_eq!(report, XRunReport { copied: 6, gaps: 2, overflow: 3, underflow: 2 });
+        assert_eq!(out, [0, 0, 0, 4, 5, 6, 7, 0, 0, 8, 9, 0, 0]);
+        assert_eq!(rb.total_consumed(), 13);
+    }
+
+    #[test]
+    fn test_read_missing_samples_use_nonzero_default() {
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        struct Sample(i16);
+
+        impl Default for Sample {
+            fn default() -> Self {
+                Self(42)
+            }
+        }
+
+        let rb = RingBuffer::<Sample>::new_unsplit(4);
+        rb.write(&[Sample(1), Sample(2), Sample(3), Sample(4)]);
+        rb.advance_timeline(1);
+        rb.write(&[Sample(5)]);
+
+        let mut out = [Sample(99); 7];
+        assert_eq!(
+            rb.read(&mut out),
+            Err(XRunReport { copied: 3, gaps: 1, overflow: 2, underflow: 1 })
+        );
+        assert_eq!(out.map(|sample| sample.0), [42, 42, 3, 4, 42, 5, 42]);
     }
 
     #[test]
