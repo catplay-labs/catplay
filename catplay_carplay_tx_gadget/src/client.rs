@@ -77,10 +77,14 @@ impl CarPlayUsbClientGadget {
     }
 
     fn connect_bonjour(&mut self, invite: &BonjourEntry<AirPlayBonjourEntry>) -> ClientResult<()> {
-        let peer_ip = *invite
-            .meta
-            .addrs
-            .first()
+        // The USB NCM link to the car only has an IPv6 link-local address on our side. Some head
+        // units (seen on GWM/Harman "GWMV2HH") list an IPv4 address first in their Bonjour entry,
+        // which is unreachable from here, so prefer IPv6 and fall back to whatever is first.
+        let addrs = &invite.meta.addrs;
+        let peer_ip = *addrs
+            .iter()
+            .find(|addr| addr.is_ipv6())
+            .or_else(|| addrs.first())
             .ok_or(CarPlayUsbClientGadgetError::UnexpectedState)?;
 
         let bootstrap = AirPlayTransmitterBootstrap {
