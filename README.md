@@ -32,15 +32,16 @@ As a result of heavy R&D, from the first public release it already offers unmatc
 
 ## Quick start
 
-| Port Status | Marketing ID | SoC | Radio | Vendor ID | Bundle | Flashing tut |
-|-------------|--------------|-----|-------|-----------|--------|--------------|
-| ✅ Stable | Carlinkit Mini Ultra 1<br>Wooboobox M5<br>Wooboobox M6<br>Wooboobox M11 | Ingenic X1600 | AIC8800D80 | AX1800M | [clk-mini-ultra-nor.7z](https://github.com/catplay-labs/catplay/releases/latest/download/clk-mini-ultra-nor.7z) | [Carlinkit Mini Ultra.md](https://github.com/catplay-labs/catplay-firmware/blob/master/docs/Carlinkit%20Mini%20Ultra.md) |
-| ✅ Stable | Carlinkit Mini Ultra 1<br>Wooboobox B12<br>EKIY EC03 | Allwinner V821B | RTL8733BS | ly5190<br>ly5166<br>ly5101 | [v821b-rtl8733bs.7z](https://github.com/catplay-labs/catplay/releases/latest/download/v821b-rtl8733bs.7z) | [V821.md](https://github.com/catplay-labs/catplay-firmware/blob/master/docs/V821.md) |
-| ✅ Beta | Wooboobox T2 | Allwinner V851S | AIC8800D80 | V851S | [v851s3-aic8800d80.7z](https://github.com/catplay-labs/catplay/releases/latest/download/v851s3-aic8800d80.7z) | [V851S.md](https://github.com/catplay-labs/catplay-firmware/blob/master/docs/V851S.md) |
-| 🛠️ In progress | Carlinkit Mini Ultra 3<br>Carlinkit CCPA-C2Air | Allwinner V821B | AIC8800D80 | - | - | - |
-| 🛠️ In progress | Carlinkit Mini Ultra 1 | Anyka AN3918AV130 | AIC8800D80 | - | - | - |
-| ⏳ Port in queue | Carlinkit 3.0/4.0/5.0 | IMX6ULL | - | - | - | - |
-| ⏳ Port in queue | Carlinkit CCPA-C2Air | Axera AX520 | AIC8800D80 | - | - | - |
+| Port Status     | Marketing ID                                                            | SoC               | Radio      | Vendor ID                  | Bundle                                                                                                          | Flashing tut                                                                                                             |
+|-----------------|-------------------------------------------------------------------------|-------------------|------------|----------------------------|-----------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
+| ✅ Stable        | Carlinkit Mini Ultra 1<br>Wooboobox M5<br>Wooboobox M6<br>Wooboobox M11 | Ingenic X1600     | AIC8800D80 | AX1800M                    | [clk-mini-ultra-nor.7z](https://github.com/catplay-labs/catplay/releases/latest/download/clk-mini-ultra-nor.7z) | [Carlinkit Mini Ultra.md](https://github.com/catplay-labs/catplay-firmware/blob/master/docs/Carlinkit%20Mini%20Ultra.md) |
+| ✅ Stable        | Carlinkit Mini Ultra 1<br>Wooboobox B12<br>EKIY EC03                    | Allwinner V821B   | RTL8733BS  | ly5190<br>ly5166<br>ly5101 | [v821b-rtl8733bs.7z](https://github.com/catplay-labs/catplay/releases/latest/download/v821b-rtl8733bs.7z)       | [V821.md](https://github.com/catplay-labs/catplay-firmware/blob/master/docs/V821.md)                                     |
+| ✅ Beta          | Wooboobox T2                                                            | Allwinner V851S   | AIC8800D80 | V851S3                     | [v851s3-aic8800d80.7z](https://github.com/catplay-labs/catplay/releases/latest/download/v851s3-aic8800d80.7z)   | [V851S.md](https://github.com/catplay-labs/catplay-firmware/blob/master/docs/V851S.md)                                   |
+| ✅ Beta          | Carlinkit Mini Ultra 6                                                  | Allwinner V553    | AIC8800D80 | V553                       | [v553-aic8800d80.7z](https://github.com/catplay-labs/catplay/releases/latest/download/v553-aic8800d80.7z)       | [V851S.md](https://github.com/catplay-labs/catplay-firmware/blob/master/docs/V851S.md)                                   |
+| 🛠️ In progress  | Carlinkit Mini Ultra 3<br>Carlinkit CCPA-C2Air                          | Allwinner V821B   | AIC8800D80 | -                          | -                                                                                                               | -                                                                                                                        |
+| 🛠️ In progress  | Carlinkit Mini Ultra 1                                                  | Anyka AN3918AV130 | AIC8800D80 | -                          | -                                                                                                               | -                                                                                                                        |
+| ⏳ Port in queue | Carlinkit 3.0/4.0/5.0                                                   | IMX6ULL           | -          | -                          | -                                                                                                               | -                                                                                                                        |
+| ⏳ Port in queue | Carlinkit CCPA-C2Air                                                    | Axera AX520       | AIC8800D80 | -                          | -                                                                                                               | -                                                                                                                        |
 
 Not sure which to flash?  
 Future releases will ship a script which can ID your dongle.    
@@ -52,12 +53,18 @@ If neither of them works, you're likely on the incompatible side right now.
 Some incompatibilities with different cars are expected at this stage (resulting in no detection of the dongle).  
 The reasons for this have _mostly_ been mapped, however fixing them requires some trial-and-error with live access to given car, which will continue to happen over time.
 
-| Car                    | HU                  | OS                   | Compatible | Issues                                                                                                                                                                                                                                                                                                                            | Carplay SDK |
-|------------------------|---------------------|----------------------|------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------|
-| Mercedes W213          | NTG5.5              | Windows Embedded (?) | Yes        | None                                                                                                                                                                                                                                                                                                                              | 280.33.12.1 |
-| SEAT Leon 5F (2019)    | TechniSat MIB2/MST2 | QNX                  | Yes        | None                                                                                                                                                                                                                                                                                                                              | 210.81      |
-| Audi/Porsche ~2020 era | HARMAN MIB2/MHI2    | QNX                  | Yes         | - audio proxy is incompatible and overflows car's audio buffer; fixes pending | 210.81      |
-|                        |                     |                      |            |                                                                                                                                                                           
+| Car                    | HU                                | OS                   | Compatible | Issues | Carplay SDK |
+|------------------------|-----------------------------------|----------------------|------------|--------|-------------|
+| Mercedes W213          | NTG5.5                            | Windows Embedded (?) | Yes        | None   | 280.33.12.1 |
+| Mercedes 2018-2020     | MBUX 1 NTG 6.0                    | Linux 3.18           | Yes*       | None   | 320.17.3    |
+| SEAT Leon 5F (2019)    | TechniSat MIB2/MST2               | QNX                  | Yes        | None   | 210.81      |
+| Audi/Porsche ~2020 era | HARMAN MIB2/MHI2                  | QNX                  | Yes        | None   | 210.81      |
+| Mazda 3                | Desay SV                          | Unknown              | Yes        | None   | 320.17.6    |
+| Peugeot 208 II (2023)  | Continental NAC W4                | Linux                | Yes*       | None   | Unknown     |
+| Peugeot 2018-2019      | Continental NAC W3                | Linux                | Yes*       | None   | Unknown     |
+| Hyundai Solaris        | Hyundai Mobis (Telechips TCC802x) | Linux                | Yes        | None   | 320.17.3    |
+
+\* compatibility might be limited to Ingenic port
 
 ## iOS compatibility
 Only iOS 26+ was tested.
