@@ -1,3 +1,4 @@
+use super::stream_claims::{StreamClaims, StreamLease};
 use catplay_tokio::TcpHelper;
 use catplay_util::{AsyncShutdown, EventReconciler, EventSleeper, deadline, mpsc, spawn_fork};
 use futures::{FutureExt, StreamExt};
@@ -34,8 +35,9 @@ pub struct AirPlayTransmitterImpl {
     media: MediaStreams,
 
     #[sleep]
-    teardown_queue: mpsc::UnboundedReceiver<StreamType>,
-    teardown_queue_tx: mpsc::UnboundedSender<StreamType>,
+    teardown_queue: mpsc::UnboundedReceiver<(StreamType, StreamLease)>,
+    teardown_queue_tx: mpsc::UnboundedSender<(StreamType, StreamLease)>,
+    stream_claims: StreamClaims<StreamType>,
     teardown_error: Option<RtspError>,
 
     next_feedback: Instant,
@@ -89,6 +91,7 @@ impl AirPlayTransmitterImpl {
             media: MediaStreams::default(),
             teardown_queue,
             teardown_queue_tx,
+            stream_claims: StreamClaims::default(),
             teardown_error: Default::default(),
             next_feedback: Instant::now(),
         }
@@ -114,7 +117,11 @@ impl AirPlayTransmitterImpl {
         loop {
             let client = self.streams.client.clone().unwrap();
 
-            while let Some(stream_type) = self.teardown_queue.next().now_or_never().flatten() {
+            while let Some((stream_type, lease)) = self.teardown_queue.next().now_or_never().flatten() {
+                if !self.stream_claims.release(stream_type, &lease) {
+                    debug!("Ignoring retired stream release: {stream_type:?}");
+                    continue;
+                }
                 debug!("Received from TEARDOWN queue: {stream_type:?}");
                 if let Some(stream) = Self::find_audio_stream(media, stream_type) {
                     stream.teardown_audio(client.clone(), false);
@@ -148,6 +155,25 @@ impl AirPlayTransmitterImpl {
                 return Ok(());
             }
         }
+    }
+
+    /// Ordered in the transmitter's task queue after earlier SETUP work. Keep
+    /// RTSP/iAP2 alive, but retire every old media owner before admitting a phone.
+    pub async fn release_phone_streams(&mut self) -> RtspResult<()> {
+        self.stream_claims.revoke_all();
+        let client = self.streams.client.clone().ok_or(RtspError::Closed)?;
+        self.media.main_audio.teardown_audio(client.clone(), true);
+        self.media.alt_audio.teardown_audio(client.clone(), true);
+        self.media.screen.teardown_screen(client.clone(), true);
+        self.media.alt_screen.teardown_screen(client, true);
+        let (main, alt, screen, alt_screen) = (&mut self.media.main_audio, &mut self.media.alt_audio, &mut self.media.screen, &mut self.media.alt_screen);
+        futures::try_join!(
+            async { main.drain_teardown().await.unwrap_or(Ok(())) },
+            async { alt.drain_teardown().await.unwrap_or(Ok(())) },
+            async { screen.drain_teardown().await.unwrap_or(Ok(())) },
+            async { alt_screen.drain_teardown().await.unwrap_or(Ok(())) },
+        )?;
+        self.drain_teardown_queue().await
     }
 
     pub async fn is_idle(&mut self) -> bool {
@@ -257,7 +283,12 @@ impl AirPlayTransmitterImpl {
         .unwrap();
         let setup = Setup::new(&[desc.into()]);
 
-        let guard = Self::create_guard(stream_type, stream_type, self.teardown_queue_tx.clone());
+        let key = match stream_type {
+            StreamType::MainHighAudio => StreamType::MainAudio,
+            other => other,
+        };
+        let lease = self.stream_claims.claim(key);
+        let guard = Self::create_guard(stream_type, key, lease, self.teardown_queue_tx.clone());
 
         info!("Audio setup request to send: {setup:?}");
 
@@ -285,11 +316,16 @@ impl AirPlayTransmitterImpl {
         Ok(guard)
     }
 
-    fn create_guard<T>(stream: T, stream_type: StreamType, teardown_queue: mpsc::UnboundedSender<StreamType>) -> TeardownGuard<T> {
+    fn create_guard<T>(
+        stream: T,
+        stream_type: StreamType,
+        lease: StreamLease,
+        teardown_queue: mpsc::UnboundedSender<(StreamType, StreamLease)>,
+    ) -> TeardownGuard<T> {
         TeardownGuard::new(stream, move || {
             debug!("TeardownGuard dropped at {stream_type:?}");
             debug!("Adding TEARDOWN to queue: {stream_type:?}");
-            if teardown_queue.unbounded_send(stream_type).is_err() {
+            if teardown_queue.unbounded_send((stream_type, lease)).is_err() {
                 debug!("Failed to add TEARDOWN to queue: {stream_type:?}");
             }
         })
@@ -364,7 +400,8 @@ impl AirPlayTransmitterImpl {
 
         let display_uuid = display.uuid.clone();
         let setup = Setup::new(&[StreamDescriptionScreen::new(id, stream_type, latency, &display_uuid).into()]);
-        let guard = Self::create_guard(sink, stream_type, self.teardown_queue_tx.clone());
+        let lease = self.stream_claims.claim(stream_type);
+        let guard = Self::create_guard(sink, stream_type, lease, self.teardown_queue_tx.clone());
 
         info!("Sending screen SETUP: {setup:?}");
         let resp = client.setup(setup).await?;

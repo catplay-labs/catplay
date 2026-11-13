@@ -23,6 +23,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use super::{PhoneGate, PhoneOp, finish_handover};
 use crate::{
     audiov2::AudioProxyUtil,
     proxy_rpc::{
@@ -58,6 +59,7 @@ pub struct CarManager {
 
     error: Option<CarManagerError>,
     proxy_rx: mpsc::UnboundedReceiver<TxAdapterOp>,
+    phone_gate: PhoneGate,
 }
 
 struct IphonePeer {
@@ -69,8 +71,6 @@ struct IphonePeer {
 enum CarManagerError {
     #[error("iPhone did not respond to command {0}, violating TX session sanity")]
     IphoneCommandTimeout(CommandType),
-    #[error("iPhone disconnected while command proxies were inflight")]
-    IphoneDisconnectedDuringProxy,
 
     #[error("Car failed to respond to RTSP command: {0}")]
     CarFailedToRespond(RtspError),
@@ -86,6 +86,7 @@ impl CarManager {
         car: TeardownGuard<AirPlayTransmitterProxyRef>,
         proxy_rx: mpsc::UnboundedReceiver<TxAdapterOp>,
         persist_dir: Option<PathBuf>,
+        phone_gate: PhoneGate,
     ) -> RtspResult<Self> {
         let info = car.info_cached();
         let car_media_clock = car.media_clock();
@@ -117,6 +118,7 @@ impl CarManager {
             pending_screen_setup: Default::default(),
             car_state: car,
             proxy_rx,
+            phone_gate,
             tx_current: None,
         })
     }
@@ -148,8 +150,8 @@ impl CarManager {
         }
     }
 
-    pub fn background(self) {
-        tokio::spawn(async move { self.worker().await });
+    pub fn background(self) -> catplay_util::AbortOnDropHandle<()> {
+        spawn(async move { self.worker().await })
     }
 
     pub async fn worker(mut self) {
@@ -256,6 +258,10 @@ impl CarManager {
 
         if let Some(cmd) = self.cmd_next.take() {
             self.dispatch_car_command(cmd).await;
+        }
+
+        if self.phone_gate.paused() {
+            return Ok(());
         }
 
         self.flush_modes();
@@ -377,40 +383,51 @@ impl CarManager {
     }
 
     pub fn dispatch_tx_op(&mut self, op: TxAdapterOp) {
+        let (lease, op) = match op {
+            TxAdapterOp::BeginHandover { ready } => {
+                self.begin_phone_handover(ready);
+                return;
+            }
+            TxAdapterOp::Phone { lease, op } => (lease, op),
+        };
+        if !self.phone_gate.owns(&lease) || (!lease.live() && !matches!(op, PhoneOp::IphoneDisconnected)) {
+            debug!("Discarding operation from retired phone session");
+            return;
+        }
         match op {
-            TxAdapterOp::IphoneConnected { handle } => {
+            PhoneOp::IphoneConnected { handle } => {
                 self.on_peer_connected(handle);
             }
-            TxAdapterOp::IphoneDisconnected => {
+            PhoneOp::IphoneDisconnected => {
                 self.on_peer_disconnect();
             }
-            TxAdapterOp::ScreenChannel { channel } => {
+            PhoneOp::ScreenChannel { channel } => {
                 debug!("iPhone: screen");
                 self.overlay.set_iphone_peer_screen(Some(channel));
             }
-            TxAdapterOp::AltScreenChannel { channel, uuid } => {
+            PhoneOp::AltScreenChannel { channel, uuid } => {
                 debug!("iPhone: alt screen");
                 if let Some(screen) = self.alt_screen.set_iphone_screen(channel, uuid.clone()) {
                     self.schedule_alt_screen_teardown(screen);
                 }
                 self.schedule_alt_screen_setup(uuid);
             }
-            TxAdapterOp::NegotiateFeatures { offered, enabled } => {
+            PhoneOp::NegotiateFeatures { offered, enabled } => {
                 let _ = enabled.send(self.on_negotiate_features(&offered));
             }
-            TxAdapterOp::Modes { modes, .. } => {
+            PhoneOp::Modes { modes, .. } => {
                 warn!("Peer modes updated: {modes:?}");
                 self.modes.on_peer_modes_changed(&modes.serialize());
             }
-            TxAdapterOp::Command { command, response } => {
+            PhoneOp::Command { command, response } => {
                 self.on_iphone_command(&command, response);
             }
-            TxAdapterOp::PatchInfo { mut info, patched } => {
+            PhoneOp::PatchInfo { mut info, patched } => {
                 // TODO reject conn if needed
                 self.on_patch_info(&mut info);
                 let _ = patched.send(info);
             }
-            TxAdapterOp::SetupAudio {
+            PhoneOp::SetupAudio {
                 latency,
                 stream_type,
                 audio_type,
@@ -423,8 +440,18 @@ impl CarManager {
                 let fut = AudioProxyUtil::open_audio(tx, latency, stream_type, audio_type, audio_format, pcm_format, duplex);
                 self.tx_queue.push_back(
                     async move {
+                        if !lease.live() {
+                            let _ = response.send(Err(RtspError::Closed));
+                            return Ok(());
+                        }
                         // Audio setup may fail, but don't treat it as full sanity error - let iPhone decide what it wants to do next
-                        let _ = response.send(fut.await);
+                        let result = fut.await;
+                        let _ = response.send(if lease.live() {
+                            result
+                        } else {
+                            drop(result);
+                            Err(RtspError::Closed)
+                        });
                         Ok(())
                     }
                     .boxed(),
@@ -435,6 +462,8 @@ impl CarManager {
 
     pub fn on_peer_connected(&mut self, handle: AirPlayReceiverHandleRef) {
         debug!("iPhone: peer");
+
+        self.on_peer_disconnect();
 
         self.iphone_peer.replace(IphonePeer {
             car_to_iphone_proxy: Default::default(),
@@ -456,13 +485,8 @@ impl CarManager {
     pub fn on_peer_disconnect(&mut self) {
         debug!("iPhone gone?");
         if let Some(peer) = self.iphone_peer.take() {
-            // If iPhone happened to disconnect while we were proxying commands
-            // treat this as a hard sanity error
-            if !peer.car_to_iphone_proxy.is_empty() {
-                // TODO: this should use recover_inflight
-                // but for now there's no API to deconstruct FuturesOrdered into parts to access the tasks
-                self.sanity_error(CarManagerError::IphoneDisconnectedDuringProxy);
-            }
+            // Dropping each proxy task now resolves its radio command explicitly.
+            drop(peer.car_to_iphone_proxy);
             warn!("modes.on_peer_disconnect()");
             self.modes.on_peer_disconnect();
         }
@@ -472,6 +496,30 @@ impl CarManager {
         if let Some(screen) = self.alt_screen.reset() {
             self.schedule_alt_screen_teardown(screen);
         }
+    }
+
+    fn begin_phone_handover(&mut self, ready: oneshot::Sender<RtspResult<()>>) {
+        self.phone_gate.pause();
+        if let Some(peer) = self.iphone_peer.as_ref() {
+            peer.iphone.close(RtspError::UserClosing);
+        }
+        self.on_peer_disconnect();
+        self.tx_current.take();
+        self.tx_queue.clear();
+        self.pending_screen_setup.take();
+        self.overlay.prepare_phone_handover();
+        self.initial_screen_steal_attempted = false;
+        let car = self.car_state.clone();
+        let gate = self.phone_gate.clone();
+        self.tx_queue.push_back(
+            async move {
+                let result = finish_handover(gate, car.release_phone_streams()).await;
+                let _ = ready.send(result.clone());
+                result
+            }
+            .boxed(),
+        );
+        info!("Phone handover: releasing media while keeping radio session alive");
     }
 
     pub fn on_patch_info(&mut self, info: &mut InfoMessageResponse) {
@@ -742,9 +790,13 @@ fn restrict_to_main_display(displays: &mut Vec<Display>, hid_devices: &mut Vec<H
             .any(|display| display.uuid == hid.display_uuid)
     });
 }
+#[cfg(test)]
+#[path = "handover_integration.rs"]
+mod handover_integration;
 
 impl Drop for CarManager {
     fn drop(&mut self) {
+        self.phone_gate.pause();
         // TODO ensure closed in all cases
         if let Some(phone) = self.iphone_peer.take() {
             phone
