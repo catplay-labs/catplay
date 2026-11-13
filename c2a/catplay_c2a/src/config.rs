@@ -12,6 +12,22 @@ pub struct AppConfig {
     pub wifi_network: WifiNetwork,
 
     pub gadget: GadgetConfig,
+    #[serde(default)]
+    pub hardware: HardwareConfig,
+}
+
+/// Explicit opt-in: pin assignments differ between dongle revisions.
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(default)]
+pub struct HardwareConfig {
+    pub enabled: bool,
+    pub button_gpiochip: Option<String>,
+    pub button_chip_label: Option<String>,
+    pub button_line: Option<u32>,
+    pub button_active_low: bool,
+    pub button_bias_pull_up: bool,
+    pub led_path: Option<String>,
+    pub led_spi_device: Option<String>,
 }
 
 // MFI start

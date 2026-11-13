@@ -1,0 +1,10 @@
+# Append to the application's TOML configuration, after checking board mapping.
+[hardware]
+enabled = true
+button_gpiochip = "/dev/gpiochip1"
+button_chip_label = "42000000.pinctrl"
+button_line = 80
+button_active_low = true
+button_bias_pull_up = true
+# Enable only after the SPI module, board DTB and physical LED are verified:
+# led_spi_device = "/dev/spidev1.0"

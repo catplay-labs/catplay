@@ -1,6 +1,9 @@
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -14,12 +17,14 @@ use catplay_hap::HomekitStorageRef;
 use catplay_iap2_usb::GadgetError;
 use catplay_mfi::MfiDeficeRef;
 use catplay_util::{
-    AsyncShutdown, EventReconciler, EventSleeper, EventToken, Reconcilable, Reconciler, deadline_after, event_select, mpsc,
+    AbortOnDropHandle, AsyncShutdown, EventReconciler, EventSleeper, EventToken, Reconcilable, Reconciler, deadline_after, event_select,
+    mpsc, oneshot, spawn,
 };
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::proxy_rpc::{CarManager, CarPlayRxSession, TxAdapter, TxAdapterOp};
+use crate::proxy_rpc::{CarManager, CarPlayRxSession, PhoneGate, TxAdapter, TxAdapterOp};
+use crate::{HardwareConfig, hardware_controls::HardwareWorker, hardware_logic::IndicatorState};
 
 pub struct ProdGadgetConfig {
     pub homekit_rx: HomekitStorageRef,
@@ -41,10 +46,12 @@ pub struct ProdGadgetConfig {
 
     pub bt_cache_file: String,
     pub persist_dir: Option<PathBuf>,
+    pub hardware: HardwareConfig,
 }
 
 pub struct ProdGadget {
     cfg: ProdGadgetConfig,
+    hardware: HardwareWorker,
 
     rx: Option<Reconciler<CarPlayWirelessGadget<CarPlayRxSession>>>,
     // rx_usb: Option<Reconciler<CarPlayUsbGadget<CarPlayRxSession>>>,
@@ -52,6 +59,9 @@ pub struct ProdGadget {
     pending_transmitter: Arc<TokioMutex<Option<TeardownGuard<AirPlayTransmitterImpl>>>>,
 
     last_tx: Arc<Mutex<Option<ProdGadgetSession>>>,
+    accepting_phone: Arc<AtomicBool>,
+    car_task: Option<AbortOnDropHandle<()>>,
+    phone_handover: Option<AbortOnDropHandle<catplay_carplay::rtsp_frame::RtspResult<()>>>,
     burst_wakeups: bool,
 }
 
@@ -67,6 +77,9 @@ pub enum ProdGadgetError {
 
     #[error("Transmitter reached eof before pickup: {0}")]
     UnpickedTransmitterEof(#[from] AirPlayTransmitterSessionError),
+
+    #[error("Failed to start car session: {0}")]
+    CarSessionStart(catplay_carplay::rtsp_frame::RtspError),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -102,24 +115,69 @@ impl From<LocalState> for LocalStatus {
 impl ProdGadget {
     const RESTART_DELAY: Duration = Duration::from_millis(1000);
 
+    /// Request the next paired phone without depending on a particular input device.
+    pub fn request_next_device(&mut self) {
+        if self
+            .last_tx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|car| !car.proxy_tx.is_closed())
+        {
+            if let Some(rx) = self.rx.as_mut() {
+                rx.child_mut().request_next_device();
+            }
+        }
+    }
+
     pub fn new(cfg: ProdGadgetConfig) -> Reconciler<Self> {
         Reconciler::new(
             Self {
+                hardware: HardwareWorker::new(cfg.hardware.clone()),
                 cfg,
                 // rx_usb: None,
                 rx: None,
                 tx: None,
                 pending_transmitter: Default::default(),
                 last_tx: Default::default(),
+                accepting_phone: Arc::new(AtomicBool::new(false)),
+                car_task: None,
+                phone_handover: None,
                 burst_wakeups: false,
             },
             Ok(ProdGadgetState::Initial),
         )
     }
+
+    async fn restart_car_session(&mut self) {
+        // Reject new receivers before tearing down the worker they would use.
+        self.accepting_phone.store(false, Ordering::Release);
+        self.phone_handover.take();
+        self.last_tx.lock().unwrap().take();
+        if let Some(rx) = self.rx.as_mut() {
+            rx.child_mut().close_for_car_restart();
+        }
+        if let Some(task) = self.car_task.take() {
+            task.abort();
+            let _ = task.await;
+        }
+        self.pending_transmitter.lock().await.take();
+        if let Some(tx) = self.tx.as_mut() {
+            tx.child_mut().restart_session().await;
+        }
+        info!("Car session released; renewing radio session without USB disconnect");
+    }
 }
 
 impl AsyncShutdown for ProdGadget {
     async fn shutdown(&mut self) {
+        self.phone_handover.take();
+        self.accepting_phone.store(false, Ordering::Release);
+        self.last_tx.lock().unwrap().take();
+        if let Some(task) = self.car_task.take() {
+            task.abort();
+            let _ = task.await;
+        }
         self.pending_transmitter.lock().await.take();
 
         if let Some(mut rx) = self.rx.take() {
@@ -137,24 +195,28 @@ impl AsyncShutdown for ProdGadget {
 #[derive(Clone)]
 pub struct ProdGadgetSession {
     pub proxy_tx: mpsc::UnboundedSender<TxAdapterOp>,
+    pub(crate) phones: PhoneGate,
 }
 
 impl EventSleeper for ProdGadget {
     async fn sleep(&mut self) -> Option<EventToken> {
         let mut pending_transmitter = self.pending_transmitter.lock().await;
-        let fallback = if self.burst_wakeups {
+        let fallback = if self.hardware.enabled() {
+            Duration::from_millis(25)
+        } else if self.burst_wakeups || self.phone_handover.is_some() {
             Duration::from_millis(50)
         } else {
             Duration::from_millis(500)
         };
 
-        event_select!(
+        let event = event_select!(
             pending_transmitter.as_mut(),
             self.tx,
             // self.rx_usb,
             self.rx,
             deadline_after(fallback)
-        )
+        );
+        event
     }
 }
 
@@ -169,10 +231,7 @@ impl Reconcilable for ProdGadget {
 
         if new.is_err() {
             debug!("Cleaning up due to error state");
-            self.pending_transmitter.lock().await.take();
-            if let Some(rx) = self.rx.as_mut() {
-                rx.child_mut().set_invites_blocked(true)
-            };
+            self.restart_car_session().await;
         }
 
         self.burst_wakeups = new.is_err()
@@ -188,9 +247,126 @@ impl Reconcilable for ProdGadget {
     }
 
     async fn render(&mut self, prev: LocalStatus, update: Instant) -> LocalStatus {
+        if self
+            .phone_handover
+            .as_ref()
+            .is_some_and(|task| task.is_finished())
+        {
+            let done = self.phone_handover.take().unwrap().await;
+            if matches!(done, Ok(Ok(()))) {
+                info!("Phone handover: media release confirmed; radio session preserved");
+            } else {
+                warn!("Phone media release failed or stalled; recovering radio and retaining target");
+                self.restart_car_session().await;
+            }
+        }
+        let stale_car = self
+            .last_tx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|car| car.proxy_tx.is_closed())
+            || self
+                .car_task
+                .as_ref()
+                .is_some_and(|task| task.is_finished());
+        if stale_car {
+            info!("Car worker ended; discarding stale session");
+            self.restart_car_session().await;
+        }
+        let switching = self
+            .rx
+            .as_ref()
+            .is_some_and(|rx| rx.child().is_switching_device());
+        let indicator = if prev.is_err() {
+            IndicatorState::Error
+        } else if switching {
+            IndicatorState::Switching
+        } else if matches!(prev, Ok(LocalState::Running)) {
+            IndicatorState::Connected
+        } else {
+            IndicatorState::Waiting
+        };
+        if self.hardware.update(indicator) {
+            self.request_next_device();
+        }
+        // Resolve radio health before allowing a phone to start connecting.
+        let _ = self.tx.reconcile().await;
+        if self.last_tx.lock().unwrap().is_some()
+            && !self
+                .tx
+                .as_ref()
+                .is_some_and(|tx| matches!(tx.state(), Ok(CarPlayUsbClientGadgetStatus::Transmitting)))
+        {
+            info!("Car USB link ended; clearing its receiver before accepting another phone");
+            self.restart_car_session().await;
+        }
+        if let Some(rx) = self.rx.as_mut() {
+            let ready = self
+                .last_tx
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|car| !car.phones.paused())
+                && self.phone_handover.is_none();
+            let recorded = self
+                .last_tx
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|car| car.phones.recorded());
+            rx.child_mut().set_phone_recorded(recorded);
+            rx.child_mut().set_invites_blocked(!ready);
+            self.accepting_phone.store(ready, Ordering::Release);
+        }
         let _ = self.rx.reconcile().await;
         // let _ = self.rx_usb.reconcile().await;
-        let _ = self.tx.reconcile().await;
+        if self
+            .rx
+            .as_mut()
+            .is_some_and(|rx| rx.child_mut().take_switch_handover_request())
+        {
+            self.accepting_phone.store(false, Ordering::Release);
+            let car = self.last_tx.lock().unwrap().clone();
+            if let Some(car) = car {
+                car.phones.pause();
+                let (ready, wait) = oneshot::channel();
+                if car
+                    .proxy_tx
+                    .unbounded_send(TxAdapterOp::BeginHandover { ready })
+                    .is_ok()
+                {
+                    let released = self
+                        .rx
+                        .as_ref()
+                        .unwrap()
+                        .child()
+                        .watch_previous_phone_release();
+                    self.phone_handover = Some(spawn(async move {
+                        let handover = async move {
+                            let result = wait
+                                .await
+                                .map_err(|_| catplay_carplay::rtsp_frame::RtspError::Closed)?;
+                            result?;
+                            if released.await.unwrap_or(false) {
+                                Ok(())
+                            } else {
+                                Err(catplay_carplay::rtsp_frame::RtspError::Closed)
+                            }
+                        };
+                        match tokio::time::timeout(Duration::from_secs(8), handover).await {
+                            Ok(result) => result,
+                            _ => Err(catplay_carplay::rtsp_frame::RtspError::Timeout),
+                        }
+                    }));
+                } else {
+                    warn!("Radio worker ended before handover; retaining switch target");
+                }
+            } else {
+                warn!("Radio disappeared before handover; retaining switch target");
+            }
+            return LocalState::WaitingForIPhone.into();
+        }
 
         let Ok(_status) = prev.as_ref() else {
             let err = prev.err().unwrap();
@@ -219,13 +395,25 @@ impl Reconcilable for ProdGadget {
                 Some(&self.cfg.bt_cache_file),
                 {
                     let car = self.last_tx.clone();
+                    let accepting = self.accepting_phone.clone();
 
                     move || {
-                        let Some(car) = car.lock().unwrap().clone() else {
+                        if !accepting.load(Ordering::Acquire) {
+                            return CarPlayRxSession::reject();
+                        }
+                        let Some(car) = car
+                            .lock()
+                            .unwrap()
+                            .clone()
+                            .filter(|car| !car.proxy_tx.is_closed())
+                        else {
                             return CarPlayRxSession::reject();
                         };
 
-                        let sess = TxAdapter::new(car.proxy_tx.clone());
+                        let Some(lease) = car.phones.acquire() else {
+                            return CarPlayRxSession::reject();
+                        };
+                        let sess = TxAdapter::new(car.proxy_tx.clone(), lease);
                         CarPlayRxSession::new(sess)
                     }
                 },
@@ -259,34 +447,43 @@ impl Reconcilable for ProdGadget {
             // pending_transmitter.replace(transmitter);
 
             let proxy_chan = mpsc::unbounded();
-            let car_state = ProdGadgetSession { proxy_tx: proxy_chan.0 };
+            let phones = PhoneGate::default();
+            let car_state = ProdGadgetSession {
+                proxy_tx: proxy_chan.0,
+                phones: phones.clone(),
+            };
 
-            let transmitter2 = CarManager::new(transmitter, proxy_chan.1, self.cfg.persist_dir.clone());
-            transmitter2.await.expect("TODO").background();
+            let transmitter2 = CarManager::new(transmitter, proxy_chan.1, self.cfg.persist_dir.clone(), phones)
+                .await
+                .map_err(LocalError::CarSessionStart)?;
+            self.car_task = Some(transmitter2.background());
             self.last_tx.lock().unwrap().replace(car_state);
         }
 
-        // TODO: this doesn't properly go back to `blocked` after transmit session is closed
-        rx.child_mut()
-            .set_invites_blocked(self.last_tx.lock().unwrap().is_none());
+        let ready = self
+            .last_tx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|car| !car.phones.paused())
+            && self.phone_handover.is_none();
+        rx.child_mut().set_invites_blocked(!ready);
+        self.accepting_phone.store(ready, Ordering::Release);
 
         match _status {
             ProdGadgetState::Initial => ProdGadgetState::WaitingForUdc.into(),
             ProdGadgetState::WaitingForUdc => ProdGadgetState::WaitingForUsbTransmitterGadget.into(),
             ProdGadgetState::WaitingForUsbTransmitterGadget => ProdGadgetState::WaitingForWirelessCarPlayGadget.into(),
             ProdGadgetState::WaitingForWirelessCarPlayGadget => ProdGadgetState::WaitingForCar.into(),
-            ProdGadgetState::WaitingForCar => match tx.state() {
-                Ok(CarPlayUsbClientGadgetStatus::Transmitting | CarPlayUsbClientGadgetStatus::TransmitterReadyForPickup) => {
+            ProdGadgetState::WaitingForCar | ProdGadgetState::WaitingForIPhone => {
+                if self.last_tx.lock().unwrap().is_none() {
+                    ProdGadgetState::WaitingForCar.into()
+                } else if matches!(rx.state(), Ok(CarPlayWirelessGadgetState::Receiving)) {
+                    ProdGadgetState::Running.into()
+                } else {
                     ProdGadgetState::WaitingForIPhone.into()
                 }
-
-                _ if pending_transmitter.is_some() => ProdGadgetState::WaitingForIPhone.into(),
-                _ => ProdGadgetState::WaitingForCar.into(),
-            },
-            ProdGadgetState::WaitingForIPhone => match rx.state() {
-                Ok(CarPlayWirelessGadgetState::Receiving) => ProdGadgetState::Running.into(),
-                _ => ProdGadgetState::WaitingForIPhone.into(),
-            },
+            }
             ProdGadgetState::Running => {
                 let still_transmitting = matches!(tx.state(), Ok(CarPlayUsbClientGadgetStatus::Transmitting));
                 let still_receiving = matches!(rx.state(), Ok(CarPlayWirelessGadgetState::Receiving));
