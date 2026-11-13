@@ -22,4 +22,5 @@ futures = "0.3.31"
 thiserror = "2.0.17"
 
 [dev-dependencies]
-catplay_carplay_rx_gadget = { path = "../catplay_carplay_rx_gadget" }
+catplay_carplay_rx_gadget = { path = "../catplay_carplay_rx_gadget", features = ["usb"] }
+catplay_iap2_usb_gadget = { path = "../usb/catplay_iap2_usb_gadget" }

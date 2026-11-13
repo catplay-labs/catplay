@@ -241,6 +241,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "needs a wlan0 interface with an address"]
     async fn test_wifi_register() {
         setup_test_logger(false);
 

@@ -44,6 +44,7 @@ pub fn init_logger() {
 // }
 
 #[tokio::test]
+#[ignore = "needs USB device controllers (e.g. dummy_hcd) and root"]
 async fn test_iap2_exchange() -> Result<(), Box<dyn Error>> {
     let _ = Command::new("/sbin/modprobe")
         .arg("-q")
