@@ -19,6 +19,8 @@ pub mod bplist;
 mod caching_serializer;
 #[cfg(feature = "serde")]
 mod flex_bool;
+#[cfg(feature = "serde")]
+mod flex_u64;
 #[cfg(feature = "alloc")]
 mod plist_byte_array;
 #[cfg(feature = "alloc")]
@@ -30,6 +32,8 @@ pub use bplist::wire::xml::encode::Options as XmlWriteOptions;
 pub use caching_serializer::CachingSerializer;
 #[cfg(feature = "serde")]
 pub use flex_bool::FlexBool;
+#[cfg(feature = "serde")]
+pub use flex_u64::FlexU64;
 #[cfg(feature = "alloc")]
 pub use plist_byte_array::PlistByteArray;
 #[cfg(feature = "alloc")]
