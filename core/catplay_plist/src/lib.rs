@@ -335,7 +335,7 @@ pub mod downcast_enum_to_legacy_u64 {
         D: Deserializer<'de>,
         T: Flags<Bits = u128>,
     {
-        let bits = u64::deserialize(deserializer)?;
+        let bits = *crate::FlexU64::deserialize(deserializer)?;
         Ok(T::from_bits_truncate(u128::from(bits)))
     }
 
@@ -356,7 +356,7 @@ pub mod downcast_enum_to_legacy_u64 {
             D: Deserializer<'de>,
             T: Flags<Bits = u128>,
         {
-            Ok(Option::<u64>::deserialize(deserializer)?.map(|bits| T::from_bits_truncate(u128::from(bits))))
+            Ok(Option::<crate::FlexU64>::deserialize(deserializer)?.map(|bits| T::from_bits_truncate(u128::from(*bits))))
         }
 
         pub fn serialize<S, T>(x: &Option<T>, serializer: S) -> Result<S::Ok, S::Error>

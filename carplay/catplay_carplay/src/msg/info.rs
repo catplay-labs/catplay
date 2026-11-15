@@ -3,7 +3,8 @@ use crate::{
     modes::ChangeModes,
     msg::{AudioFormat, AudioType, DisplayFeature, ExtendedFeature, LimitedUIElement, PrimaryInputDevice, StreamType},
 };
-use catplay_plist::{FlexBool, PlistByteArray, downcast_enum_to_legacy_u64, plist_struct};
+use catplay_plist::{FlexBool, FlexU64, PlistByteArray, downcast_enum_to_legacy_u64, plist_struct};
+use serde::Deserialize;
 
 plist_struct! {
     pub struct InfoMessage {
@@ -88,6 +89,17 @@ plist_struct! {
     }
 }
 
+fn deserialize_audio_stream_type<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<StreamType, D::Error> {
+    let value = FlexU64::deserialize(deserializer)?;
+    StreamType::deserialize(serde::de::value::U64Deserializer::<D::Error>::new(*value))
+}
+
+fn deserialize_optional_audio_stream_type<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<StreamType>, D::Error> {
+    Option::<FlexU64>::deserialize(deserializer)?
+        .map(|value| StreamType::deserialize(serde::de::value::U64Deserializer::<D::Error>::new(*value)))
+        .transpose()
+}
+
 plist_struct! {
     pub struct AudioFormatStruct {
         #[serde(default, with = "downcast_enum_to_legacy_u64::option")]
@@ -95,6 +107,7 @@ plist_struct! {
         #[serde(default, with = "downcast_enum_to_legacy_u64::option")]
         pub audio_output_formats: Option<AudioFormat>,
         #[serde(rename = "type")]
+        #[serde(deserialize_with = "deserialize_audio_stream_type")]
         pub stream_type: StreamType,
         /// Absent in v210.81
         pub audio_type: Option<AudioType>
@@ -105,13 +118,14 @@ plist_struct! {
     pub struct AudioLatency {
         #[serde(rename = "type")]
         /// Absent in v210.81
+        #[serde(default, deserialize_with = "deserialize_optional_audio_stream_type")]
         pub stream_type: Option<StreamType>,
         pub audio_type: Option<AudioType>,
-        pub sr: Option<u64>,
-        pub ss: Option<u64>,
-        pub ch: Option<u64>,
-        pub input_latency_micros: Option<u64>,
-        pub output_latency_micros: Option<u64>
+        pub sr: Option<FlexU64>,
+        pub ss: Option<FlexU64>,
+        pub ch: Option<FlexU64>,
+        pub input_latency_micros: Option<FlexU64>,
+        pub output_latency_micros: Option<FlexU64>
     }
 }
 
@@ -192,6 +206,42 @@ impl Display {
 mod audio_format_tests {
     use super::*;
     use catplay_plist::{Dictionary, Value, from_bytes, to_writer_binary};
+
+    #[test]
+    fn honda_pilot_sdk_210_81_string_audio_numbers() {
+        let entry = Value::Dictionary(Dictionary::from_iter([
+            ("audioInputFormats", Value::from("54")),
+            ("audioOutputFormats", Value::from("8054")),
+            ("type", Value::from("100")),
+        ]));
+        let mut binary = Vec::new();
+        to_writer_binary(&mut binary, &entry).unwrap();
+        let decoded: AudioFormatStruct = from_bytes(&binary).unwrap();
+        // Bits 0 and 1 are reserved and are truncated for numeric inputs too.
+        assert_eq!(decoded.audio_input_formats.unwrap().bits(), 52);
+        assert_eq!(decoded.audio_output_formats.unwrap().bits(), 8052);
+        assert_eq!(decoded.stream_type, StreamType::MainAudio);
+
+        let entry = Value::Dictionary(Dictionary::from_iter([
+            ("inputLatencyMicros", Value::from("100000")),
+            ("outputLatencyMicros", Value::from("100000")),
+            ("sr", Value::from("48000")),
+            ("ss", Value::from("16")),
+            ("ch", Value::from("2")),
+            ("type", Value::from("101")),
+            ("audioType", Value::from("alert")),
+        ]));
+        binary.clear();
+        to_writer_binary(&mut binary, &entry).unwrap();
+        let decoded: AudioLatency = from_bytes(&binary).unwrap();
+        assert_eq!(*decoded.input_latency_micros.unwrap(), 100000);
+        assert_eq!(*decoded.output_latency_micros.unwrap(), 100000);
+        assert_eq!(*decoded.sr.unwrap(), 48000);
+        assert_eq!(*decoded.ss.unwrap(), 16);
+        assert_eq!(*decoded.ch.unwrap(), 2);
+        assert_eq!(decoded.stream_type, Some(StreamType::AltAudio));
+        assert_eq!(decoded.audio_type, Some(AudioType::Alert));
+    }
 
     #[test]
     fn info_audio_formats_keep_only_low_64_bits_on_wire() {

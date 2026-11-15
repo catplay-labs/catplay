@@ -139,8 +139,8 @@ impl AirPlayReceiver {
                 sr: None,
                 ss: None,
                 ch: None,
-                input_latency_micros: input_latency,
-                output_latency_micros: output_latency,
+                input_latency_micros: input_latency.map(Into::into),
+                output_latency_micros: output_latency.map(Into::into),
             });
         }
     }
