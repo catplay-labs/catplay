@@ -119,7 +119,7 @@ impl<T: EventServerCallback> EventsServer<T> {
 
     pub fn drain_next_response(&mut self, sink: &mut dyn TcpSink<Self>) -> RtspResult<()> {
         if let Some(resp) = self.next_response.take() {
-            warn!("Writing response -> {resp}");
+            debug!("Writing response -> {resp}");
             sink.write(vec![resp.into()])?;
         }
 
@@ -156,7 +156,7 @@ impl<T: EventServerCallback> TcpSession for EventsServer<T> {
                 return Err(RtspError::ProtocolViolationGeneric);
             };
 
-            warn!("Received event frame <- {request}");
+            debug!("Received event frame <- {request}");
 
             let id = self.next_id;
             self.next_id += 1;

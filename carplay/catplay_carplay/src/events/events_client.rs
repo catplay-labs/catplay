@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use catplay_plist::CachingSerializer;
 use catplay_tokio::{CItem, TcpSession, TcpSink};
 use catplay_util::{AsyncShutdown, EventSleeper};
-use log::warn;
+use log::debug;
 
 use crate::{
     cipher::AirPlayCipherSaltType,
@@ -90,7 +90,7 @@ impl TcpSession for EventsClient {
     async fn on_msg(&mut self, _sink: &mut dyn TcpSink<Self>, msgs: CItem<Self::Codec>) -> RtspResult<()> {
         for msg in msgs {
             if let RtspFrame::Response(resp) = msg {
-                warn!("Event socket: <- {resp}");
+                debug!("Event socket: <- {resp}");
                 self.rtsp_drain.feed(resp);
             }
         }
@@ -99,7 +99,7 @@ impl TcpSession for EventsClient {
 
     async fn reconcile(&mut self, _sink: &mut dyn TcpSink<Self>) -> RtspResult<()> {
         for req in self.rtsp_drain.drain() {
-            warn!("Event socket: -> {}", &req);
+            debug!("Event socket: -> {}", &req);
             _sink.write(vec![req.into()])?;
         }
 
