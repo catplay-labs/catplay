@@ -405,12 +405,12 @@ plist_struct! {
     pub struct HidDevice {
         #[serde(rename = "displayUUID")]
         pub display_uuid: String,
-        pub hid_country_code: u16,
+        pub hid_country_code: Option<u16>,
         pub hid_descriptor: PlistByteArray,
         #[serde(rename = "hidProductID")]
-        pub hid_product_id: u16,
+        pub hid_product_id: Option<u16>,
         #[serde(rename = "hidVendorID")]
-        pub hid_vendor_id: u16,
+        pub hid_vendor_id: Option<u16>,
         pub name: String,
         pub uuid: String,
     }
