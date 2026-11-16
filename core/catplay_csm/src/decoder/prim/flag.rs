@@ -1,3 +1,5 @@
+use core::ops::Deref;
+
 use crate::decoder::CsmWriter;
 
 use crate::decoder::wire::{CsmDecode, CsmEncode};
@@ -8,6 +10,23 @@ pub enum CsmFlag {
     #[default]
     No,
     Yes,
+}
+
+impl Deref for CsmFlag {
+    type Target = bool;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::No => &false,
+            Self::Yes => &true,
+        }
+    }
+}
+
+impl From<bool> for CsmFlag {
+    fn from(value: bool) -> Self {
+        if value { Self::Yes } else { Self::No }
+    }
 }
 
 impl CsmDecode for CsmFlag {
@@ -21,5 +40,26 @@ impl CsmEncode for CsmFlag {
         if *self == CsmFlag::Yes {
             out.write_tlv(id, &[]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CsmFlag;
+
+    #[test]
+    fn boolean_methods_work_through_owned_and_borrowed_flags() {
+        assert_eq!(CsmFlag::No.then_some(7), None);
+        let requested = &CsmFlag::Yes;
+        assert_eq!(requested.then_some(false), Some(false));
+        assert_eq!(requested.then_some(0), Some(0));
+        assert!(*CsmFlag::Yes);
+        assert!(!*CsmFlag::default());
+    }
+
+    #[test]
+    fn converts_both_boolean_values_to_flags() {
+        assert_eq!(CsmFlag::from(false), CsmFlag::No);
+        assert_eq!(CsmFlag::from(true), CsmFlag::Yes);
     }
 }
