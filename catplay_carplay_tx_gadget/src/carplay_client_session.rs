@@ -859,26 +859,28 @@ impl CsmSession for CarPlayClientSession {
             }
         }
 
-        if packet.cast::<StartCommunicationsUpdates>().is_some() {
+        if let Some(request) = packet.cast::<StartCommunicationsUpdates>() {
             self.send(
                 &CommunicationsUpdate {
-                    signal_strength: Some(CommunicationsUpdateSignalStrength::Value5Bars),
-                    registration_status: Some(CommunicationsUpdateRegistrationStatus::RegisteredHome),
-                    airplane_mode_status: Some(false),
-                    carrier_name: Some("Mobile".into()),
-                    cellular_supported: Some(true),
-                    telephony_enabled: Some(true),
-                    face_time_audio_enabled: Some(false),
-                    face_time_video_enabled: Some(false),
-                    mute_status: Some(false),
-                    current_call_count: Some(0),
-                    new_voicemail_count: Some(0),
-                    initiate_call_available: Some(false),
-                    end_and_accept_available: Some(false),
-                    hold_and_accept_available: Some(false),
-                    swap_available: Some(false),
-                    merge_available: Some(false),
-                    hold_available: Some(false),
+                    signal_strength: Some(CommunicationsUpdateSignalStrength::Value5Bars)
+                        .take_if(|_| request.signal_strength == CsmFlag::Yes),
+                    registration_status: Some(CommunicationsUpdateRegistrationStatus::RegisteredHome)
+                        .take_if(|_| request.registration_status == CsmFlag::Yes),
+                    airplane_mode_status: Some(false).take_if(|_| request.airplane_mode_status == CsmFlag::Yes),
+                    carrier_name: Some("Mobile".into()).take_if(|_| request.carrier_name == CsmFlag::Yes),
+                    cellular_supported: Some(true).take_if(|_| request.cellular_supported == CsmFlag::Yes),
+                    telephony_enabled: Some(true).take_if(|_| request.telephony_enabled == CsmFlag::Yes),
+                    face_time_audio_enabled: Some(false).take_if(|_| request.face_time_audio_enabled == CsmFlag::Yes),
+                    face_time_video_enabled: Some(false).take_if(|_| request.face_time_video_enabled == CsmFlag::Yes),
+                    mute_status: Some(false).take_if(|_| request.mute_status == CsmFlag::Yes),
+                    current_call_count: Some(0).take_if(|_| request.current_call_count == CsmFlag::Yes),
+                    new_voicemail_count: Some(0).take_if(|_| request.new_voicemail_count == CsmFlag::Yes),
+                    initiate_call_available: Some(false).take_if(|_| request.initiate_call_available == CsmFlag::Yes),
+                    end_and_accept_available: Some(false).take_if(|_| request.end_and_accept_available == CsmFlag::Yes),
+                    hold_and_accept_available: Some(false).take_if(|_| request.hold_and_accept_available == CsmFlag::Yes),
+                    swap_available: Some(false).take_if(|_| request.swap_available == CsmFlag::Yes),
+                    merge_available: Some(false).take_if(|_| request.merge_available == CsmFlag::Yes),
+                    hold_available: Some(false).take_if(|_| request.hold_available == CsmFlag::Yes),
                 },
                 &_handle,
             )?;
@@ -921,6 +923,7 @@ mod legacy_tests {
         downgrade: bool,
         remote: CsmRemote,
         csm_count: Mutex<usize>,
+        communications: Mutex<Vec<CommunicationsUpdate>>,
         lingo: Mutex<Vec<Outgoing>>,
         lingo_link: Mutex<LingoLinkLayer>,
         sent_ids: Mutex<Vec<Option<u16>>>,
@@ -934,6 +937,7 @@ mod legacy_tests {
                 downgrade,
                 remote: CsmRemote::usb_gadget(),
                 csm_count: Mutex::new(0),
+                communications: Mutex::new(Vec::new()),
                 lingo: Mutex::new(Vec::new()),
                 lingo_link: Mutex::new(lingo_link),
                 sent_ids: Mutex::new(Vec::new()),
@@ -965,7 +969,10 @@ mod legacy_tests {
                 CsmSessionStatus::Writable
             }
         }
-        fn send(&self, _: &dyn AsCsmPacket) -> CsmSessionResult<()> {
+        fn send(&self, packet: &dyn AsCsmPacket) -> CsmSessionResult<()> {
+            if let Some(update) = packet.as_csm().cast::<CommunicationsUpdate>() {
+                self.communications.lock().unwrap().push(update.clone());
+            }
             *self.csm_count.lock().unwrap() += 1;
             Ok(())
         }
@@ -1000,6 +1007,176 @@ mod legacy_tests {
             None
         }
         fn send_file(&self, _: u8, _: u16, _: &[u8], _: Vec<u8>) {}
+    }
+
+    fn communications_reply(request: StartCommunicationsUpdates) -> CommunicationsUpdate {
+        let handle = Handle::new(false);
+        let mut session = CarPlayClientSession::default();
+        futures::executor::block_on(session.start(handle.clone())).unwrap();
+        futures::executor::block_on(session.respond(request.into(), handle.clone())).unwrap();
+        let updates = handle.communications.lock().unwrap();
+        assert_eq!(updates.len(), 1);
+        updates[0].clone()
+    }
+
+    fn communications_param_ids(update: &CommunicationsUpdate) -> Vec<u16> {
+        use catplay_csm::decoder::{CsmPayloadEncode, CsmReader};
+
+        let bytes = update.serialize();
+        let mut reader = CsmReader::new(&bytes);
+        let mut ids = Vec::new();
+        reader.stream_all(|param| ids.push(param.id));
+        assert!(reader.take_error().is_none());
+        ids
+    }
+
+    #[test]
+    fn communications_empty_request_sends_no_params() {
+        let update = communications_reply(StartCommunicationsUpdates::default());
+        assert!(communications_param_ids(&update).is_empty());
+    }
+
+    #[test]
+    fn communications_legacy_request_omits_modern_params() {
+        let update = communications_reply(StartCommunicationsUpdates {
+            signal_strength: CsmFlag::Yes,
+            registration_status: CsmFlag::Yes,
+            airplane_mode_status: CsmFlag::Yes,
+            carrier_name: CsmFlag::Yes,
+            ..Default::default()
+        });
+        assert_eq!(communications_param_ids(&update), vec![0, 1, 2, 4]);
+        assert_eq!(update.airplane_mode_status, Some(false));
+        assert_eq!(update.carrier_name.unwrap().as_str(), "Mobile");
+    }
+
+    #[test]
+    fn communications_each_request_flag_selects_only_its_param() {
+        let cases = [
+            (
+                StartCommunicationsUpdates {
+                    signal_strength: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                0,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    registration_status: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                1,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    airplane_mode_status: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                2,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    carrier_name: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                4,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    cellular_supported: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                5,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    telephony_enabled: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                6,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    face_time_audio_enabled: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                7,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    face_time_video_enabled: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                8,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    mute_status: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                9,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    current_call_count: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                10,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    new_voicemail_count: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                11,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    initiate_call_available: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                12,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    end_and_accept_available: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                13,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    hold_and_accept_available: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                14,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    swap_available: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                15,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    merge_available: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                16,
+            ),
+            (
+                StartCommunicationsUpdates {
+                    hold_available: CsmFlag::Yes,
+                    ..Default::default()
+                },
+                17,
+            ),
+        ];
+        for (request, expected_id) in cases {
+            let update = communications_reply(request);
+            assert_eq!(communications_param_ids(&update), vec![expected_id]);
+        }
     }
 
     #[test]
