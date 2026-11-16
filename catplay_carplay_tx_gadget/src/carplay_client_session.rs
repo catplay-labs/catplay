@@ -862,25 +862,27 @@ impl CsmSession for CarPlayClientSession {
         if let Some(request) = packet.cast::<StartCommunicationsUpdates>() {
             self.send(
                 &CommunicationsUpdate {
-                    signal_strength: Some(CommunicationsUpdateSignalStrength::Value5Bars)
-                        .take_if(|_| request.signal_strength == CsmFlag::Yes),
-                    registration_status: Some(CommunicationsUpdateRegistrationStatus::RegisteredHome)
-                        .take_if(|_| request.registration_status == CsmFlag::Yes),
-                    airplane_mode_status: Some(false).take_if(|_| request.airplane_mode_status == CsmFlag::Yes),
-                    carrier_name: Some("Mobile".into()).take_if(|_| request.carrier_name == CsmFlag::Yes),
-                    cellular_supported: Some(true).take_if(|_| request.cellular_supported == CsmFlag::Yes),
-                    telephony_enabled: Some(true).take_if(|_| request.telephony_enabled == CsmFlag::Yes),
-                    face_time_audio_enabled: Some(false).take_if(|_| request.face_time_audio_enabled == CsmFlag::Yes),
-                    face_time_video_enabled: Some(false).take_if(|_| request.face_time_video_enabled == CsmFlag::Yes),
-                    mute_status: Some(false).take_if(|_| request.mute_status == CsmFlag::Yes),
-                    current_call_count: Some(0).take_if(|_| request.current_call_count == CsmFlag::Yes),
-                    new_voicemail_count: Some(0).take_if(|_| request.new_voicemail_count == CsmFlag::Yes),
-                    initiate_call_available: Some(false).take_if(|_| request.initiate_call_available == CsmFlag::Yes),
-                    end_and_accept_available: Some(false).take_if(|_| request.end_and_accept_available == CsmFlag::Yes),
-                    hold_and_accept_available: Some(false).take_if(|_| request.hold_and_accept_available == CsmFlag::Yes),
-                    swap_available: Some(false).take_if(|_| request.swap_available == CsmFlag::Yes),
-                    merge_available: Some(false).take_if(|_| request.merge_available == CsmFlag::Yes),
-                    hold_available: Some(false).take_if(|_| request.hold_available == CsmFlag::Yes),
+                    signal_strength: request
+                        .signal_strength
+                        .then_some(CommunicationsUpdateSignalStrength::Value5Bars),
+                    registration_status: request
+                        .registration_status
+                        .then_some(CommunicationsUpdateRegistrationStatus::RegisteredHome),
+                    airplane_mode_status: request.airplane_mode_status.then_some(false),
+                    carrier_name: request.carrier_name.then_some("Mobile".into()),
+                    cellular_supported: request.cellular_supported.then_some(true),
+                    telephony_enabled: request.telephony_enabled.then_some(true),
+                    face_time_audio_enabled: request.face_time_audio_enabled.then_some(false),
+                    face_time_video_enabled: request.face_time_video_enabled.then_some(false),
+                    mute_status: request.mute_status.then_some(false),
+                    current_call_count: request.current_call_count.then_some(0),
+                    new_voicemail_count: request.new_voicemail_count.then_some(0),
+                    initiate_call_available: request.initiate_call_available.then_some(false),
+                    end_and_accept_available: request.end_and_accept_available.then_some(false),
+                    hold_and_accept_available: request.hold_and_accept_available.then_some(false),
+                    swap_available: request.swap_available.then_some(false),
+                    merge_available: request.merge_available.then_some(false),
+                    hold_available: request.hold_available.then_some(false),
                 },
                 &_handle,
             )?;
