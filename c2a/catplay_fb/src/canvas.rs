@@ -18,6 +18,12 @@ pub trait Canvas {
 
     #[inline(always)]
     fn get_pixel(&mut self, x: usize, y: usize) -> Option<&mut u32> {
+        // The buffer is a flat row-major array, so an x past the right edge would
+        // otherwise alias onto the start of the next row.
+        if x >= self.width() as usize || y >= self.height() as usize {
+            return None;
+        }
+
         let i = y * self.width() as usize + x;
         self.as_rgba_u32().get_mut(i)
     }
