@@ -1,4 +1,7 @@
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 use catplay_carplay::modes::{
     AppStateEnum, ChangeModes, ChangeModesResponse, EntityEnum, ModesChanged, Resource, ResourceConstraint, ResourceController, ResourceID,
@@ -9,16 +12,21 @@ use log::warn;
 pub struct ModesArbiter {
     modes: ResourceController,
     modes_dirty: bool,
+    /// when the car sent a requestUI that could not be served yet
+    ui_requested_at: Option<Instant>,
     inflight_peer_change_modes: VecDeque<ChangeModes>,
     accepted_peer_change_modes: VecDeque<ChangeModes>,
     pending_peer_modes_changed: VecDeque<ModesChanged>,
 }
 
 impl ModesArbiter {
+    const UI_REQUEST_TTL: Duration = Duration::from_secs(3);
+
     pub fn new(info_modes: &ChangeModes) -> Self {
         Self {
             modes: ResourceController::from_change_modes(info_modes),
             modes_dirty: true,
+            ui_requested_at: None,
             inflight_peer_change_modes: VecDeque::new(),
             accepted_peer_change_modes: VecDeque::new(),
             pending_peer_modes_changed: VecDeque::new(),
@@ -27,7 +35,34 @@ impl ModesArbiter {
 
     pub fn process_car_request(&mut self, request: &ChangeModes) -> ChangeModesResponse {
         self.mark_dirty();
-        self.modes_mut().process_request_to_response(request)
+        let resp = self.modes_mut().process_request_to_response(request);
+        // some cars forbid taking the screen until they answer requestUI with a changeModes that allows it
+        self.steal_screen_for_ui();
+        resp
+    }
+
+    /// takes the screen for the car's requestUI, now if its constraints allow it,
+    /// otherwise after a car request that arrives within [Self::UI_REQUEST_TTL]
+    pub fn request_ui(&mut self) {
+        self.ui_requested_at = Some(Instant::now());
+        self.steal_screen_for_ui();
+    }
+
+    fn steal_screen_for_ui(&mut self) {
+        let Some(requested_at) = self.ui_requested_at else {
+            return;
+        };
+
+        // a later car request is not the user's tap anymore
+        if requested_at.elapsed() > Self::UI_REQUEST_TTL {
+            self.ui_requested_at = None;
+            return;
+        }
+
+        self.try_steal_screen(ResourceTransferPriority::UserInitiated);
+        if self.has_screen() {
+            self.ui_requested_at = None;
+        }
     }
 
     pub fn modes(&self) -> ResourceController {
@@ -68,6 +103,7 @@ impl ModesArbiter {
             ResourceConstraint::Anytime,
             ResourceConstraint::Anytime,
         );
+        self.ui_requested_at = None;
 
         self.modes_dirty = true;
     }
@@ -259,6 +295,110 @@ mod tests {
     };
 
     use super::*;
+
+    /// initial modes of a car that owns the screen and never lets it be taken
+    fn screen_never_takeable_modes() -> ChangeModes {
+        ChangeModes {
+            app_states: vec![],
+            resources: vec![
+                Resource::take(
+                    ResourceID::MainScreen,
+                    ResourceTransferPriority::UserInitiated,
+                    ResourceConstraint::Never,
+                    ResourceConstraint::Anytime,
+                ),
+                Resource::take(
+                    ResourceID::MainAudio,
+                    ResourceTransferPriority::UserInitiated,
+                    ResourceConstraint::UserInitiated,
+                    ResourceConstraint::Anytime,
+                ),
+            ],
+            reason_str: "initial".into(),
+            initial_permanent_entity: vec![],
+        }
+    }
+
+    fn car_takes_screen_allowing_user_initiated_take() -> ChangeModes {
+        ChangeModes {
+            app_states: vec![],
+            resources: vec![Resource::take(
+                ResourceID::MainScreen,
+                ResourceTransferPriority::UserInitiated,
+                ResourceConstraint::UserInitiated,
+                ResourceConstraint::Anytime,
+            )],
+            reason_str: "no reason".into(),
+            initial_permanent_entity: vec![],
+        }
+    }
+
+    #[test]
+    fn requested_ui_takes_screen_once_car_allows_it() {
+        let mut arbiter = ModesArbiter::new(&screen_never_takeable_modes());
+
+        arbiter.request_ui();
+        assert!(!arbiter.has_screen());
+
+        let resp = arbiter.process_car_request(&car_takes_screen_allowing_user_initiated_take());
+        assert_eq!(resp.status, 0);
+        assert!(arbiter.has_screen());
+        assert!(arbiter.modes_dirty());
+
+        // the request is spent, the car can take the screen back and keep it
+        let resp = arbiter.process_car_request(&car_takes_screen_allowing_user_initiated_take());
+        assert_eq!(resp.status, 0);
+        assert!(!arbiter.has_screen());
+    }
+
+    #[test]
+    fn requested_ui_served_at_once_does_not_steal_later() {
+        let mut arbiter = ModesArbiter::new(&car_takes_screen_allowing_user_initiated_take());
+
+        arbiter.request_ui();
+        assert!(arbiter.has_screen());
+
+        let resp = arbiter.process_car_request(&car_takes_screen_allowing_user_initiated_take());
+        assert_eq!(resp.status, 0);
+        assert!(!arbiter.has_screen());
+    }
+
+    #[test]
+    fn requested_ui_stays_pending_while_car_keeps_screen_untakeable() {
+        let mut arbiter = ModesArbiter::new(&screen_never_takeable_modes());
+
+        arbiter.request_ui();
+        let resp = arbiter.process_car_request(&screen_never_takeable_modes());
+        assert_eq!(resp.status, 0);
+        assert!(!arbiter.has_screen());
+
+        let resp = arbiter.process_car_request(&car_takes_screen_allowing_user_initiated_take());
+        assert_eq!(resp.status, 0);
+        assert!(arbiter.has_screen());
+    }
+
+    #[test]
+    fn requested_ui_expires() {
+        let mut arbiter = ModesArbiter::new(&screen_never_takeable_modes());
+
+        arbiter.request_ui();
+        arbiter.ui_requested_at = Instant::now().checked_sub(ModesArbiter::UI_REQUEST_TTL + Duration::from_secs(1));
+        assert!(arbiter.ui_requested_at.is_some());
+
+        let resp = arbiter.process_car_request(&car_takes_screen_allowing_user_initiated_take());
+        assert_eq!(resp.status, 0);
+        assert!(!arbiter.has_screen());
+        assert!(arbiter.ui_requested_at.is_none());
+    }
+
+    #[test]
+    fn car_change_modes_without_requested_ui_keeps_screen_with_car() {
+        let mut arbiter = ModesArbiter::new(&screen_never_takeable_modes());
+
+        let resp = arbiter.process_car_request(&car_takes_screen_allowing_user_initiated_take());
+        assert_eq!(resp.status, 0);
+        assert!(!arbiter.has_screen());
+    }
 
     #[test]
     fn peer_change_modes_cycle_preserves_accessory_constraints() {
