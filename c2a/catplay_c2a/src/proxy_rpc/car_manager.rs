@@ -707,8 +707,7 @@ impl CarManager {
             }
             Command::RequestUI(_) => {
                 warn!("requestUI during overlay!");
-                self.modes
-                    .try_steal_screen(ResourceTransferPriority::UserInitiated);
+                self.modes.request_ui();
                 self.modes.mark_dirty();
 
                 sleep(Duration::from_millis(100)).await;
