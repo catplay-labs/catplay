@@ -363,4 +363,24 @@ mod tests {
 
         assert_eq!(Canvas::as_rgba(&mut dst), &[11, 22, 33, 44]);
     }
+
+    #[test]
+    fn get_pixel_rejects_coordinates_outside_the_surface() {
+        let mut surface = Surface::new(4, 2);
+
+        assert!(Canvas::get_pixel(&mut surface, 3, 1).is_some());
+        assert!(Canvas::get_pixel(&mut surface, 4, 0).is_none());
+        assert!(Canvas::get_pixel(&mut surface, 0, 2).is_none());
+    }
+
+    #[test]
+    fn text_pixel_past_right_edge_does_not_wrap_to_next_row() {
+        let mut surface = Surface::new(4, 2);
+        Canvas::fill(&mut surface, 0);
+        surface.set_pen_color(0x00FFFFFF);
+
+        // x == width used to alias onto (0, 1).
+        assert!(!surface.blend_pixel(4, 0, 255));
+        assert_eq!(Canvas::rgba_u32(&surface), &[0; 8]);
+    }
 }

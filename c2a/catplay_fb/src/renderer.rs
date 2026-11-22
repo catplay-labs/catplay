@@ -99,6 +99,9 @@ impl fmt::Debug for RenderOp {
         }
     }
 }
+/// Widest a single line of text may get, as a fraction of the screen width.
+const TEXT_MAX_SCREEN_FRACTION: f32 = 0.95;
+
 pub struct Renderer {
     fb: Surface,
     dpi: f32,
@@ -201,7 +204,20 @@ impl Renderer {
                 } => {
                     let r = resolve_rect(*rect, self.fb.width, self.fb.height, self.dpi);
                     let (rx, ry, rw, rh) = (r.x, r.y, r.w, r.h);
-                    let px = font_size_pt * self.dpi / 72.0;
+                    let mut px = font_size_pt * self.dpi / 72.0;
+
+                    // Shrink text that would not fit on the screen at all, so that long
+                    // strings (e.g. the pairing prompt with a long device name) stay
+                    // readable on head units with a narrow CarPlay viewport.
+                    // Text that already fits is left untouched.
+                    let max_w = self.fb.width as f32 * TEXT_MAX_SCREEN_FRACTION;
+                    let tw = self
+                        .assets
+                        .load_font_scale((*font_id).clone(), px.round() as _)?
+                        .measure_text_width(text);
+                    if tw > max_w && max_w > 0.0 {
+                        px = (px.round() * max_w / tw).floor().max(1.0);
+                    }
 
                     let font_renderer = self
                         .assets
@@ -246,5 +262,76 @@ impl Renderer {
 
     pub fn framebuffer(&mut self) -> &mut Surface {
         &mut self.fb
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Unit;
+
+    const FONT: &[u8] = include_bytes!("../../catplay_c2a/assets/Exo2-Light.otf");
+
+    /// Renders `text` the way the C2A overlay does (30 pt, centered, 700 dp box) on a
+    /// `width` x 200 screen at 64 dpi, and returns the first and last column that
+    /// received any text pixels.
+    fn ink_columns(width: i32, text: &str) -> (usize, usize) {
+        let mut renderer = Renderer::new(width, 200, 64.0);
+        renderer
+            .execute(&[
+                RenderOp::SetBackground { rgba: 0xFF000000 },
+                RenderOp::LoadAssetConst {
+                    id: "font",
+                    buf: FONT,
+                    asset_type: AssetType::Font,
+                },
+                RenderOp::DrawText {
+                    text: text.into(),
+                    rect: UiRect {
+                        x: Unit::Percent(0.5),
+                        y: Unit::Percent(0.3),
+                        w: Unit::Dp(700.0),
+                        h: Unit::Dp(0.0),
+                        anchor: Anchor::BaselineCenter,
+                    },
+                    align: TextAlign::Center,
+                    font_id: "font".into(),
+                    font_size_pt: 30.0,
+                    color: 0xFFFFFFFF,
+                },
+            ])
+            .unwrap();
+
+        let fb = renderer.framebuffer();
+        let bg = Canvas::rgba_u32(fb)[0];
+        let w = width as usize;
+        let inked: Vec<usize> = Canvas::rgba_u32(fb)
+            .iter()
+            .enumerate()
+            .filter(|(_, px)| **px != bg)
+            .map(|(i, _)| i % w)
+            .collect();
+        (*inked.iter().min().unwrap(), *inked.iter().max().unwrap())
+    }
+
+    #[test]
+    fn text_wider_than_screen_is_shrunk_to_fit() {
+        let width = 320;
+        let (first, last) = ink_columns(width, "Press any key to pair: Somebody's iPhone | 756615");
+
+        // Unscaled (30 pt at 64 dpi = ~27 px) this string is about twice the screen width
+        // and would be cut at both edges.
+        assert!(first > 0, "text runs off the left edge (first ink column {first})");
+        assert!(last < width as usize - 1, "text runs off the right edge (last ink column {last})");
+    }
+
+    #[test]
+    fn text_that_fits_keeps_its_size() {
+        let width = 1280;
+        let (first, last) = ink_columns(width, "Waiting for connection...");
+        let ink_w = last - first + 1;
+
+        // At ~27 px this string is well over 200 px wide; a shrunk one would not be.
+        assert!(ink_w > 200, "short text was shrunk (ink width {ink_w})");
     }
 }
