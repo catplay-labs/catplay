@@ -49,7 +49,14 @@ plist_enum! {
         /// Main Audio
         SpeechRecognition,
         /// Main Audio, Alt Audio
-        Compatibility
+        Compatibility,
+        /// Spoken audio such as navigation prompts (advertised by Honda head units, SDK 210.81)
+        SpokenAudio,
+        /// Advertised by Honda head units (SDK 210.81)
+        Measurement,
+        /// Any audio type this build does not know; keeps /info parseable on newer head units.
+        #[serde(other)]
+        Unknown
     }
 }
 
