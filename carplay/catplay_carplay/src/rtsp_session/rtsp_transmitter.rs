@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     net::{SocketAddr, TcpStream},
     sync::{Arc, Mutex},
 };
@@ -7,7 +8,7 @@ use async_trait::async_trait;
 use catplay_tokio::{CItem, TcpSession, TcpSink};
 use catplay_tracing::{strace, tracer::SessionTracer};
 use catplay_util::{AsyncShutdown, EventReconciler, EventSink, EventSleeper, EventToken, event_select, notify::Notify};
-use log::{debug, warn};
+use log::{Level, debug, log, warn};
 
 use crate::{
     cipher::AirPlayCipherSaltType,
@@ -15,8 +16,33 @@ use crate::{
     rtsp_transport::{AirPlayTransportCodec, RtspFrame},
 };
 
+/// CSeqs of keep-alive requests in flight, so their responses can be logged as quietly as the requests.
+#[derive(Default)]
+struct KeepaliveCseqs(VecDeque<u32>);
+
+impl KeepaliveCseqs {
+    /// Keep-alives that never get a response are forgotten after this many newer ones.
+    const MAX: usize = 8;
+
+    fn sent(&mut self, cseq: u32) {
+        if self.0.len() == Self::MAX {
+            self.0.pop_front();
+        }
+        self.0.push_back(cseq);
+    }
+
+    /// Returns whether `cseq` belonged to a keep-alive, and forgets it.
+    fn take(&mut self, cseq: u32) -> bool {
+        match self.0.iter().position(|c| *c == cseq) {
+            Some(i) => self.0.remove(i).is_some(),
+            None => false,
+        }
+    }
+}
+
 pub struct RtspTransmitter<T: RtspTransmitterCallback> {
     rtsp_drain: RtspDrain,
+    keepalive_cseqs: KeepaliveCseqs,
     inner: Arc<Inner>,
 
     pending_init: Option<RtspTransmitterEvent>,
@@ -87,6 +113,7 @@ impl<T: RtspTransmitterCallback> RtspTransmitter<T> {
 
         RtspTransmitter {
             rtsp_drain: drain,
+            keepalive_cseqs: KeepaliveCseqs::default(),
             inner,
 
             callback,
@@ -148,7 +175,16 @@ impl<T: RtspTransmitterCallback> TcpSession for RtspTransmitter<T> {
                 strace!(tracer, "Sending request: \n{}", req_for_trace);
             }
 
-            warn!("Sending request: \n{req}");
+            let level = match req {
+                RtspFrame::Request(req) if req.is_keepalive() => {
+                    if let Some(cseq) = req.cseq {
+                        self.keepalive_cseqs.sent(cseq);
+                    }
+                    Level::Debug
+                }
+                _ => Level::Warn,
+            };
+            log!(level, "Sending request: \n{req}");
         }
 
         sink.write(out)?;
@@ -181,7 +217,11 @@ impl<T: RtspTransmitterCallback> TcpSession for RtspTransmitter<T> {
                 strace!(tracer, "Received response: \n{}", resp_for_trace);
             }
 
-            warn!("Received response: \n{resp}");
+            let keepalive = resp
+                .cseq
+                .is_some_and(|cseq| self.keepalive_cseqs.take(cseq));
+            let level = if keepalive { Level::Debug } else { Level::Warn };
+            log!(level, "Received response: \n{resp}");
 
             self.rtsp_drain.feed(resp);
         }
@@ -236,4 +276,31 @@ impl<T: RtspTransmitterCallback> EventSleeper for RtspTransmitter<T> {
 
 impl<T: RtspTransmitterCallback> AsyncShutdown for RtspTransmitter<T> {
     async fn shutdown(&mut self) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::KeepaliveCseqs;
+
+    #[test]
+    fn keepalive_response_is_recognised_once() {
+        let mut cseqs = KeepaliveCseqs::default();
+        cseqs.sent(7);
+
+        assert!(!cseqs.take(8), "a CSeq that was never a keep-alive");
+        assert!(cseqs.take(7));
+        assert!(!cseqs.take(7), "already consumed");
+    }
+
+    #[test]
+    fn unanswered_keepalives_are_bounded() {
+        let mut cseqs = KeepaliveCseqs::default();
+        for cseq in 0..20 {
+            cseqs.sent(cseq);
+        }
+
+        assert_eq!(cseqs.0.len(), KeepaliveCseqs::MAX);
+        assert!(!cseqs.take(0), "oldest entries are dropped");
+        assert!(cseqs.take(19));
+    }
 }
