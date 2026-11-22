@@ -1,0 +1,8 @@
+__pycache__/
+*.ko
+*.o
+*.mod.c
+.*.cmd
+.tmp_versions/
+Module.symvers
+modules.order

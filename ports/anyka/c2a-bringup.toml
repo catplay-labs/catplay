@@ -1,0 +1,31 @@
+# Start CatPlay against the stock Anyka kernel during development.
+debug = true
+persist_dir = "/tmp/catplay-c2a/state"
+
+[mfi]
+selftest = true
+
+[mfi.i2c]
+bus_offset = 0
+dev_addr = 16
+timeout_ms = 1000
+
+[bluetooth]
+enabled = true
+device = "hci0"
+name = "HONDONGLE"
+
+[wifi]
+enabled = true
+device = "wlan0"
+
+[wifi_network]
+ssid = "CatPlay-Anyka"
+password = "catplay-dev"
+wpa = true
+channel = 36
+
+[gadget]
+enabled = true
+pinned = true
+udc_car = "20200000.usb"

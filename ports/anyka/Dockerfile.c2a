@@ -1,0 +1,17 @@
+FROM rust:1.94.0-slim-bookworm
+RUN dpkg --add-architecture armel \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       build-essential gcc-arm-linux-gnueabi g++-arm-linux-gnueabi \
+       binutils-arm-linux-gnueabi pkg-config cmake clang git ca-certificates perl python3 \
+       libopus-dev:armel libpixman-1-dev:armel libx264-dev:armel libyuv-dev:armel \
+    && rm -rf /var/lib/apt/lists/*
+RUN rustup target add armv5te-unknown-linux-gnueabi
+ENV CARGO_TARGET_ARMV5TE_UNKNOWN_LINUX_GNUEABI_LINKER=arm-linux-gnueabi-gcc \
+    CC_armv5te_unknown_linux_gnueabi=arm-linux-gnueabi-gcc \
+    CXX_armv5te_unknown_linux_gnueabi=arm-linux-gnueabi-g++ \
+    AR_armv5te_unknown_linux_gnueabi=arm-linux-gnueabi-ar \
+    PKG_CONFIG_ALLOW_CROSS=1 \
+    PKG_CONFIG_LIBDIR=/usr/lib/arm-linux-gnueabi/pkgconfig:/usr/share/pkgconfig \
+    LIBUDEV_NO_PKG_CONFIG=1 \
+    BINDGEN_EXTRA_CLANG_ARGS="--target=arm-linux-gnueabi -I/usr/arm-linux-gnueabi/include"

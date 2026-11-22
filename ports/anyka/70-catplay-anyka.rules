@@ -1,0 +1,2 @@
+# Access for the temporary development gadget, scoped to its diagnostic identity.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0525", ATTR{idProduct}=="a4a1", ATTR{serial}=="catplay-anyka-probe", TAG+="uaccess"

@@ -1,0 +1,15 @@
+#!/bin/sh
+export PATH=/bin:/sbin
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+echo CATPLAY_RAM_BOOT_OK
+cat /proc/version
+if insmod /lib/ak_udc.ko; then
+    echo 'Anyka USB controller loaded'
+else
+    echo 'Anyka USB controller failed to load'
+fi
+# A connected host opens ttyGS0 before this shell becomes interactive.
+while [ ! -e /dev/ttyGS0 ]; do sleep 1; done
+exec /bin/usb-shell

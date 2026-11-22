@@ -1,0 +1,39 @@
+--- a/os/kernel/kernel/time/posix-timers.c
++++ b/os/kernel/kernel/time/posix-timers.c
+@@ -1179,18 +1179,24 @@
+     return -EINVAL;
+ }
+ 
++/* The syscall ABI has two 64-bit fields, including nanoseconds on ARM32. */
+ SYSCALL_DEFINE2(clock_gettime64, const clockid_t, which_clock,
+     struct __kernel_timespec __user *, tp)
+ {
+-    struct timespec64 now;
+-
+-    if(which_clock == CLOCK_REALTIME) {
+-        getnstimeofday64(&now);
+-
+-        if (copy_to_user(tp, &now, sizeof(*tp))) {
+-            return -EFAULT;
+-        }
+-    }
+-
+-    return 0;
+-}
++    struct k_clock *kc = clockid_to_kclock(which_clock);
++    struct timespec now;
++    struct {
++        s64 tv_sec;
++        s64 tv_nsec;
++    } result;
++    int error;
++
++    if (!kc)
++        return -EINVAL;
++    error = kc->clock_get(which_clock, &now);
++    if (error)
++        return error;
++    result.tv_sec = now.tv_sec;
++    result.tv_nsec = now.tv_nsec;
++    return copy_to_user(tp, &result, sizeof(result)) ? -EFAULT : 0;
++}

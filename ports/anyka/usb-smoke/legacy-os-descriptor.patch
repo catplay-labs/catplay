@@ -1,0 +1,13 @@
+--- a/src/function/custom/ffs.rs
++++ b/src/function/custom/ffs.rs
+@@ -404,7 +404,9 @@
+ impl OsExtCompat {
+     fn write(&self, data: &mut Vec<u8>) -> Result<()> {
+         data.write_u8(self.first_interface_number)?;
+-        data.write_u8(1)?;
++        // Linux 4.4 FunctionFS rejects a nonzero userspace Reserved1 byte.
++        let reserved = if linux_version() == Some((4, 4)) { 0 } else { 1 };
++        data.write_u8(reserved)?;
+         data.extend_from_slice(&self.compatible_id);
+         data.extend_from_slice(&self.sub_compatible_id);
+         data.extend_from_slice(&[0; 6]);

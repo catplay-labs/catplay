@@ -1,0 +1,15 @@
+[package]
+name = "catplay-anyka-usb-smoke"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+usb-gadget = { version = "=0.7.6", features = ["tokio"] }
+bytes = "1.11.0"
+libc = "0.2.191"
+macaddr = "1.0.1"
+log = "0.4.35"
+tokio = { version = "=1.49.0", features = ["rt", "time"] }

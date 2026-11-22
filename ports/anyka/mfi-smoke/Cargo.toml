@@ -1,0 +1,11 @@
+[package]
+name = "catplay-anyka-mfi-smoke"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+catplay_mfi = { path = "../../../core/catplay_mfi" }
+libc = "0.2.191"

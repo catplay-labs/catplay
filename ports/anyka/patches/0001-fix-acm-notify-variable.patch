@@ -1,0 +1,15 @@
+diff --git a/os/kernel/drivers/usb/gadget/function/f_acm.c b/os/kernel/drivers/usb/gadget/function/f_acm.c
+index d73b80e5..d02448fd 100755
+--- a/os/kernel/drivers/usb/gadget/function/f_acm.c
++++ b/os/kernel/drivers/usb/gadget/function/f_acm.c
+@@ -91,9 +91,8 @@ static inline struct f_acm *port_to_acm(struct gserial *p)
+ #define GS_NOTIFY_INTERVAL_MS		32
+ #define GS_NOTIFY_MAXPACKET		10	/* notification + 2 bytes */
+ 
+-#ifdef CONFIG_USB_F_ACM_FAKE_NOTIFY
++/* The configfs attributes reference this even with real notifications. */
+ static u8 notify_endpoint_num = 0;
+-#endif
+ 
+ /* interface and class descriptors: */
+ 
