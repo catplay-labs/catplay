@@ -31,6 +31,7 @@ pub struct OverlayManager {
     overlay_render_queue: FuturesOrdered<BoxFuture<'static, UiResult<EncodedVideoFrame>>>,
     overlay_current: Option<UiState>,
     overlay_last_keyframe: Option<EncodedVideoFrame>,
+    overlay_last_sent: Option<Instant>,
 
     iphone_peer: Option<AirPlayReceiverHandleRef>,
 
@@ -44,6 +45,8 @@ pub struct OverlayManager {
 }
 
 impl OverlayManager {
+    const OVERLAY_REPEAT_INTERVAL: Duration = Duration::from_millis(500);
+
     pub fn new(width: u32, height: u32, fps: u32, dpi: f32, persist_dir: Option<PathBuf>) -> Self {
         Self {
             width,
@@ -55,6 +58,7 @@ impl OverlayManager {
             overlay_render_queue: Default::default(),
             overlay_current: None,
             overlay_last_keyframe: None,
+            overlay_last_sent: None,
 
             iphone_peer: None,
 
@@ -179,6 +183,7 @@ impl OverlayManager {
                 true => {
                     frame.pts = (Instant::now() + Duration::from_millis(75)).into();
                     self.overlay_last_keyframe.replace(frame.clone());
+                    self.overlay_last_sent.replace(Instant::now());
 
                     if let Err((err, _)) = lazy_screen.push_frame(frame).await {
                         warn!("Sink rejected UI frame?: {err}");
@@ -208,9 +213,20 @@ impl OverlayManager {
                 self.reset_overlay();
             }
             (Some(old), Some(current)) if old == current => {
-                // Overlay stays the same.
-                // Consider repeating the keyframe or ticking the UI animation if needed.
-                // self.overlay_current.unwrap().tick();
+                // Overlay stays the same. Some head units (Honda, SDK 210.81) hold the newest
+                // frame in their decoder until another arrives, so a lone overlay frame (such
+                // as a pairing PIN) is not shown until the next change. Repeat it.
+                if self.overlay_render_queue.is_empty()
+                    && self.overlay_last_sent.is_some_and(|t| t.elapsed() >= Self::OVERLAY_REPEAT_INTERVAL)
+                    && let Some(screen) = self.lazy_screen.as_mut()
+                    && let Some(mut last) = self.overlay_last_keyframe.clone()
+                {
+                    last.pts = (Instant::now() + Duration::from_millis(75)).into();
+                    if let Err((err, _)) = screen.push_frame(last).await {
+                        warn!("Sink rejected repeated UI frame: {err}");
+                    }
+                    self.overlay_last_sent.replace(Instant::now());
+                }
             }
             (_, Some(next)) => {
                 // Something new to render
