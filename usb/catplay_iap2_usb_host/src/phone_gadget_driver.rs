@@ -20,7 +20,26 @@ fn read_as_string(path: &str) -> io::Result<String> {
 }
 
 fn verify_function(udc: &str, path: &str) -> GadgetResult<()> {
-    let function = read_as_string(path).map_err(|e| GadgetError::FailedUdcStatusCheck(e.into()))?;
+    let function = read_as_string(path)
+        .or_else(|error| {
+            if error.kind() != io::ErrorKind::NotFound {
+                return Err(error);
+            }
+            let udc_dir = Path::new(path).parent().unwrap_or(Path::new(path));
+            if !udc_dir.exists() {
+                // Some controllers (Anyka) unload the UDC driver during a role
+                // switch to host mode. No UDC means no other function owns it.
+                return Ok(String::new());
+            }
+            // Older UDC cores publish the bound driver only in uevent.
+            let uevent = fs::read_to_string(udc_dir.join("uevent"))?;
+            Ok(uevent
+                .lines()
+                .find_map(|line| line.strip_prefix("USB_UDC_DRIVER="))
+                .unwrap_or_default()
+                .to_owned())
+        })
+        .map_err(|e| GadgetError::FailedUdcStatusCheck(e.into()))?;
     let function = function.trim();
 
     if !function.is_empty() && !function.starts_with("iphone") {

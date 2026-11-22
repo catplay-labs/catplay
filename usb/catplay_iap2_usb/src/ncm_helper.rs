@@ -63,6 +63,10 @@ impl NcmHelper {
     pub fn set_interface_ip(interface: &str, ip: &str) -> GadgetResult<()> {
         debug!("IP for {} is being set to {}", interface, ip);
 
+        if !Path::new("/sbin/ip").exists() {
+            return Self::set_interface_ip_ioctl(interface, ip);
+        }
+
         let status = Command::new("/sbin/ip")
             .args(["addr", "flush", "dev", interface])
             .status()?;
@@ -90,6 +94,10 @@ impl NcmHelper {
     pub fn disable_interface(interface: &str) -> GadgetResult<()> {
         debug!("NCM interface {} is being disabled", interface);
 
+        if !Path::new("/sbin/ip").exists() {
+            return Self::set_link_up_ioctl(interface, false);
+        }
+
         let status = Command::new("/sbin/ip")
             .args(["link", "set", interface, "down"])
             .status()?;
@@ -98,6 +106,93 @@ impl NcmHelper {
             return Err(GadgetError::FailedIpLinkSetup("ip link set down failed".into()));
         }
 
+        Ok(())
+    }
+
+    /// Equivalent of `ip addr flush`, `ip addr replace`, and `ip link set up`
+    /// for IPv6 on systems without iproute2, such as minimal BusyBox images.
+    fn set_interface_ip_ioctl(interface: &str, ip: &str) -> GadgetResult<()> {
+        let (addr, prefix) = ip.split_once('/').unwrap_or((ip, "128"));
+        let addr: Ipv6Addr = addr
+            .parse()
+            .map_err(|_| GadgetError::FailedIpLinkSetup(format!("invalid IPv6 address {ip}").into()))?;
+        let prefix: u32 = prefix
+            .parse()
+            .map_err(|_| GadgetError::FailedIpLinkSetup(format!("invalid IPv6 prefix {ip}").into()))?;
+
+        // /proc/net/if_inet6: address, ifindex, prefix, scope, flags, name
+        let existing = fs::read_to_string("/proc/net/if_inet6")?;
+        for line in existing.lines() {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            if fields.len() < 6 || fields[5] != interface {
+                continue;
+            }
+            let (Ok(bits), Ok(len)) = (u128::from_str_radix(fields[0], 16), u32::from_str_radix(fields[2], 16))
+            else {
+                continue;
+            };
+            Self::ipv6_addr_ioctl(interface, Ipv6Addr::from(bits), len, libc::SIOCDIFADDR)?;
+        }
+
+        Self::ipv6_addr_ioctl(interface, addr, prefix, libc::SIOCSIFADDR)?;
+        Self::set_link_up_ioctl(interface, true)
+    }
+
+    fn ipv6_addr_ioctl(interface: &str, addr: Ipv6Addr, prefix: u32, request: libc::c_ulong) -> GadgetResult<()> {
+        #[repr(C)]
+        struct In6Ifreq {
+            addr: [u8; 16],
+            prefix_len: u32,
+            ifindex: libc::c_int,
+        }
+
+        let name = CString::new(interface).map_err(|_| io::Error::from(ErrorKind::InvalidInput))?;
+        let ifindex = unsafe { libc::if_nametoindex(name.as_ptr()) };
+        if ifindex == 0 {
+            return Err(io::Error::last_os_error())?;
+        }
+        let fd = unsafe { libc::socket(libc::AF_INET6, libc::SOCK_DGRAM, 0) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error())?;
+        }
+        let _fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let mut req = In6Ifreq { addr: addr.octets(), prefix_len: prefix, ifindex: ifindex as _ };
+        if unsafe { libc::ioctl(fd, request as _, &mut req) } < 0 {
+            let error = io::Error::last_os_error();
+            // Adding an existing address or deleting a vanished one is fine.
+            if !matches!(error.raw_os_error(), Some(libc::EEXIST) | Some(libc::EADDRNOTAVAIL)) {
+                return Err(error)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn set_link_up_ioctl(interface: &str, up: bool) -> GadgetResult<()> {
+        if interface.len() >= libc::IFNAMSIZ {
+            return Err(io::Error::from(ErrorKind::InvalidInput))?;
+        }
+        let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error())?;
+        }
+        let _fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let mut req: libc::ifreq = unsafe { zeroed() };
+        for (dst, src) in req.ifr_name.iter_mut().zip(interface.bytes()) {
+            *dst = src as libc::c_char;
+        }
+        if unsafe { libc::ioctl(fd, libc::SIOCGIFFLAGS as _, &mut req) } < 0 {
+            return Err(io::Error::last_os_error())?;
+        }
+        unsafe {
+            if up {
+                req.ifr_ifru.ifru_flags |= libc::IFF_UP as libc::c_short;
+            } else {
+                req.ifr_ifru.ifru_flags &= !(libc::IFF_UP as libc::c_short);
+            }
+        }
+        if unsafe { libc::ioctl(fd, libc::SIOCSIFFLAGS as _, &mut req) } < 0 {
+            return Err(io::Error::last_os_error())?;
+        }
         Ok(())
     }
 
