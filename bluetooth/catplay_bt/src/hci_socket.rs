@@ -129,6 +129,16 @@ impl HciSocket {
         send_mgmt_packet(self.fd, MgmtOp::SetDevClass as u16, self.adapter, &class)
     }
 
+    /// Set the adapter's Powered setting.
+    pub fn set_powered(&self, powered: bool) -> io::Result<()> {
+        send_mgmt_packet(self.fd, MgmtOp::SetPowered as u16, self.adapter, &[powered as u8])
+    }
+
+    /// Set BR/EDR Secure Connections support. The kernel only accepts this while unpowered.
+    pub fn set_secure_connections(&self, enabled: bool) -> io::Result<()> {
+        send_mgmt_packet(self.fd, MgmtOp::SetSecureConn as u16, self.adapter, &[enabled as u8])
+    }
+
     /// Add EIR advertisement UUID
     pub fn add_uuid(&self, uuid: &str) -> io::Result<()> {
         let uuid_le = uuid_string_to_mgmt_le_bytes(uuid).map_err(|e| io::Error::other(format!("invalid uuid: {}", e)))?;

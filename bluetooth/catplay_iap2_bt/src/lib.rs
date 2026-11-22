@@ -150,6 +150,16 @@ impl BluetoothManager {
     async fn do_hcihacks(&self, adapter_index: u16) -> io::Result<()> {
         let hci = HciSocket::new(adapter_index)?;
 
+        // Some controllers (AIC8800 on the Anyka dongle) fail BR/EDR Secure Connections pairing
+        // with iPhones: Simple Pairing Complete reports Authentication Failure after numeric
+        // comparison. Falling back to P-192 SSP works. Opt in with CATPLAY_BT_SECURE_CONNECTIONS=0.
+        if std::env::var("CATPLAY_BT_SECURE_CONNECTIONS").as_deref() == Ok("0") {
+            hci.set_powered(false)?;
+            let result = hci.set_secure_connections(false);
+            hci.set_powered(true)?;
+            result.map_err(|err| io::Error::new(err.kind(), format!("failed to disable Secure Connections: {}", err)))?;
+        }
+
         if self.hcihacks && self.carplay && !self.server {
             hci.add_uuid(CARPLAY_EIR_ACCESSORY)
                 .map_err(|err| io::Error::new(err.kind(), format!("failed to register CarPlay BT Accessory EIR: {}", err)))?;
