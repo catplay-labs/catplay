@@ -27,7 +27,8 @@ pub(super) fn filter_audio_sample_rates(iphone: &mut [AudioFormatStruct], car: &
             .fold(AudioFormat::empty(), |formats, other| formats | other);
 
         if let Some(formats) = entry.audio_output_formats.as_mut() {
-            for format in *formats {
+            let original = *formats;
+            for format in original {
                 let Ok(asbd) = AudioStreamBasicDescription::try_from(format) else {
                     continue;
                 };
@@ -41,6 +42,15 @@ pub(super) fn filter_audio_sample_rates(iphone: &mut [AudioFormatStruct], car: &
                 if !supported {
                     formats.remove(format);
                 }
+            }
+
+            // Wireless AltAudio needs a compressed format. When the car only takes PCM 44.1 kHz
+            // on AltAudio (Honda SDK 210.81), every Opus rate is filtered out and iOS 27 never
+            // creates the CarPlay audio route. Keep Opus 48 kHz: the proxy opens the car's
+            // AltAudio as PCM 48 kHz without resampling, and the Honda plays it correctly.
+            let opus = AudioFormat::OPUS_16000_MONO | AudioFormat::OPUS_24000_MONO | AudioFormat::OPUS_48000_MONO;
+            if entry.stream_type == StreamType::AltAudio && !formats.intersects(opus) {
+                *formats |= original & AudioFormat::OPUS_48000_MONO;
             }
         }
     }
@@ -93,6 +103,10 @@ mod tests {
             for (entry, original) in info.iter().zip(&original) {
                 assert_eq!(entry.audio_input_formats, original.audio_input_formats);
                 for format in entry.audio_output_formats.unwrap() {
+                    // Wireless AltAudio keeps Opus 48 kHz even without matching PCM.
+                    if entry.stream_type == StreamType::AltAudio && format == AudioFormat::OPUS_48000_MONO {
+                        continue;
+                    }
                     assert_ne!(
                         AudioStreamBasicDescription::try_from(format)
                             .unwrap()
@@ -165,7 +179,7 @@ mod tests {
         );
         assert_eq!(
             output(&info, StreamType::AltAudio, AudioType::Default),
-            AudioFormat::PCM_44100_STEREO
+            AudioFormat::PCM_44100_STEREO | AudioFormat::OPUS_48000_MONO
         );
     }
 
