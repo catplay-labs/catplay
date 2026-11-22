@@ -419,13 +419,17 @@ impl AsyncClient {
                     trace!("Received CSM bytes: {value:?}");
 
                     let registry = CsmPacketRegistry::static_registry();
-                    let Some(pkt) = registry.decode(&value) else {
-                        return Err(CsmSessionError::ReceivedCorruptedCsmPayload);
-                    };
-
-                    #[cfg(debug_assertions)]
-                    debug!("Received CSM: <- {pkt:?}");
-                    self.session.respond(pkt, self.handle.clone()).await?;
+                    match registry.decode(&value) {
+                        Some(pkt) => {
+                            #[cfg(debug_assertions)]
+                            debug!("Received CSM: <- {pkt:?}");
+                            self.session.respond(pkt, self.handle.clone()).await?;
+                        }
+                        // Head units send messages this registry does not model yet (seen on
+                        // Honda after StartMediaLibraryInformation). Skip them as the iAP1 path
+                        // does rather than tearing down the whole session.
+                        None => warn!("Skipping undecodable CSM payload: {value:02x?}"),
+                    }
                 }
                 LinkEvent::Write(packet) => {
                     #[cfg(debug_assertions)]
