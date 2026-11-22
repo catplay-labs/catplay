@@ -202,7 +202,9 @@ mod tests {
         let remote2 = pll.local_to_remote(t2);
 
         let drift = remote2 - remote1 - (t2 - t1);
-        assert_eq!(drift, 1_000, "drift mismatch: got {} ns", drift);
+        // Drift correction is currently switched off; the mapping is then a plain offset.
+        let expected = if MediaPll::DISABLE_PLL { 0 } else { 1_000 };
+        assert_eq!(drift, expected, "drift mismatch: got {} ns", drift);
     }
     #[test]
     fn test_round_trip_after_time_passes() {

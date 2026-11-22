@@ -1,4 +1,4 @@
-FROM rust:1.92
+FROM rust:1.94
 
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:${PATH}
@@ -39,6 +39,9 @@ RUN curl -fsSL https://downloads.sourceforge.net/libjpeg-turbo/libjpeg-turbo-3.0
         -DENABLE_STATIC=OFF \
     && cmake --build /tmp/libjpeg-turbo-build --parallel \
     && cmake --install /tmp/libjpeg-turbo-build \
+    && ldconfig \
     && rm -rf /tmp/libjpeg-turbo.tar.gz /tmp/libjpeg-turbo-3.0.1 /tmp/libjpeg-turbo-build
+
+RUN rustup component add clippy rustfmt
 
 RUN cargo install cargo-nextest --locked --root /usr/local/cargo
