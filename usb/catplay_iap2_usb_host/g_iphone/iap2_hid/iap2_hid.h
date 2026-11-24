@@ -53,6 +53,8 @@ struct iap2_hid *iap2_hid_create(struct device *parent,
                                 const struct iap2_hid_io_ops *ops, void *ctx);
 /* Sleepable; exactly once, including after closed. Old FDs retain reason. */
 void iap2_hid_destroy(struct iap2_hid *hid, int reason);
+/* Caller owns hid and serializes this against destroy. */
+int iap2_hid_link_session(struct iap2_hid *hid, struct device *owner);
 
 /* Atomic-safe ingress after the SET_REPORT data stage. Only Output reports are
  * supported; Feature/Input return -EOPNOTSUPP. Validate ID and report length.

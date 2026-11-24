@@ -8,6 +8,7 @@
 #include "iap2_usb_bulk.h"
 #include "../iap2_char/iap2_transport.h"
 
+#define IAP2_USB_DRIVER_NAME "iap2_char"
 #define IAP2_RX_INFLIGHT 3
 #define IAP2_RX_RETRY_MS 100
 
@@ -326,6 +327,23 @@ int iap2_usb_bulk_devnode_path(struct usb_interface *intf, char *buf, size_t siz
 }
 EXPORT_SYMBOL_GPL(iap2_usb_bulk_devnode_path);
 
+int iap2_usb_bulk_link_session(struct usb_interface *intf, struct device *owner)
+{
+    struct iap2_usb *usb;
+    int ret;
+
+    /* USB unbind holds this lock while disconnect unregisters the session. */
+    device_lock(&intf->dev);
+    usb = NULL;
+    if (intf->dev.driver &&
+        !strcmp(intf->dev.driver->name, IAP2_USB_DRIVER_NAME))
+        usb = usb_get_intfdata(intf);
+    ret = usb ? iap2_session_link(usb->session, owner) : -ENODEV;
+    device_unlock(&intf->dev);
+    return ret;
+}
+EXPORT_SYMBOL_GPL(iap2_usb_bulk_link_session);
+
 static int iap2_usb_probe(struct usb_interface *intf, const struct usb_device_id *id)
 {
     struct usb_host_interface *alts = intf->cur_altsetting;
@@ -427,7 +445,7 @@ static const struct usb_device_id iap2_id_table[] = {
 MODULE_DEVICE_TABLE(usb, iap2_id_table);
 
 static struct usb_driver iap2_usb_driver = {
-    .name = "iap2_char",
+    .name = IAP2_USB_DRIVER_NAME,
     .probe = iap2_usb_probe,
     .disconnect = iap2_usb_disconnect,
     .id_table = iap2_id_table,

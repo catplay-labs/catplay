@@ -56,7 +56,6 @@ struct iap2_session {
 /* Keep session numbers distinct while old open files still reference them. */
 static DEFINE_MUTEX(iap2_registry_mutex);
 static DEFINE_IDA(iap2_ids);
-static struct iap2_session *iap2_active_session;
 
 static void iap2_session_release(struct kref *ref)
 {
@@ -117,8 +116,6 @@ static void iap2_close_work(struct work_struct *work)
         s->started = false;
     }
     mutex_unlock(&s->io_mutex);
-    if (iap2_active_session == s)
-        iap2_active_session = NULL;
     mutex_unlock(&iap2_registry_mutex);
 }
 
@@ -480,11 +477,6 @@ struct iap2_session *iap2_session_register(struct device *parent,
     s->miscdev.mode = 0600;
 
     mutex_lock(&iap2_registry_mutex);
-    if (iap2_active_session) {
-        mutex_unlock(&iap2_registry_mutex);
-        ret = -EBUSY;
-        goto put;
-    }
     ret = ida_alloc(&iap2_ids, GFP_KERNEL);
     if (ret < 0) {
         mutex_unlock(&iap2_registry_mutex);
@@ -492,7 +484,6 @@ struct iap2_session *iap2_session_register(struct device *parent,
     }
     s->id = ret;
     snprintf(s->name, sizeof(s->name), "iap2-%d", s->id);
-    iap2_active_session = s;
     mutex_lock(&s->io_mutex);
     s->started = true;
     ret = ops->start(ctx, &iap2_events, s);
@@ -542,13 +533,11 @@ int iap2_session_devnode_path(struct iap2_session *s, char *buf, size_t size)
 }
 EXPORT_SYMBOL_GPL(iap2_session_devnode_path);
 
-int iap2_session_link_active(struct device *owner)
+int iap2_session_link(struct iap2_session *s, struct device *owner)
 {
-    struct iap2_session *s;
     int ret;
 
     mutex_lock(&iap2_registry_mutex);
-    s = iap2_active_session;
     if (!s || !s->registered || iap2_terminal_error(s))
         ret = -ENODEV;
     else
@@ -557,7 +546,7 @@ int iap2_session_link_active(struct device *owner)
     mutex_unlock(&iap2_registry_mutex);
     return ret;
 }
-EXPORT_SYMBOL_GPL(iap2_session_link_active);
+EXPORT_SYMBOL_GPL(iap2_session_link);
 
 MODULE_AUTHOR("CatPlay");
 MODULE_DESCRIPTION("iAP2 character device core");

@@ -398,6 +398,12 @@ fail:
 }
 EXPORT_SYMBOL_GPL(iap2_hid_create);
 
+int iap2_hid_link_session(struct iap2_hid *hid, struct device *owner)
+{
+    return iap2_session_link(hid ? hid->session : NULL, owner);
+}
+EXPORT_SYMBOL_GPL(iap2_hid_link_session);
+
 void iap2_hid_destroy(struct iap2_hid *hid, int reason)
 {
     int i;

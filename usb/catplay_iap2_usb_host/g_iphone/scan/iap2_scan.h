@@ -29,5 +29,6 @@ struct iap2_acc_accessory *iap2_acc_probe_accessory(void);
 void iap2_acc_put_accessory(struct iap2_acc_accessory *acc);
 bool iap2_acc_is_gone(struct iap2_acc_accessory *acc);
 struct device *iap2_acc_device_get(struct iap2_acc_accessory *acc);
+int iap2_acc_link_session(struct iap2_acc_accessory *acc, struct device *owner);
 
 #endif

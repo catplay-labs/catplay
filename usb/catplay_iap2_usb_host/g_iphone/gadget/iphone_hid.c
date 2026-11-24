@@ -290,6 +290,11 @@ out:
     return ret;
 }
 
+int iphone_hid_link_session(struct iphone_hid *hid, struct device *owner)
+{
+    return iap2_hid_link_session(hid ? hid->backend : NULL, owner);
+}
+
 int iphone_hid_enable(struct iphone_hid *hid)
 {
     unsigned long flags;

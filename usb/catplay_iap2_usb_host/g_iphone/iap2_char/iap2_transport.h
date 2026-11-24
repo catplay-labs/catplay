@@ -45,7 +45,8 @@ struct iap2_transport_ops {
     void (*stop)(void *ctx, int reason);
 };
 
-/* One live backend at a time; numbers are retained until the last session ref.
+/* Independent backends may overlap. Numbers remain reserved until the last
+ * session reference is released.
  * Caller owns ctx until unregister returns. On registration failure,
  * returns ERR_PTR and has already stopped any partially started backend.
  * The ops/ctx need not survive old open FDs after unregister.
@@ -59,7 +60,9 @@ struct iap2_session *iap2_session_register(struct device *parent,
  */
 void iap2_session_unregister(struct iap2_session *session, int reason);
 int iap2_session_devnode_path(struct iap2_session *session, char *buf, size_t size);
-/* Publish the currently active transport under a g_iphone device. */
-int iap2_session_link_active(struct device *owner);
+/* Publish this transport under a g_iphone device. Caller keeps the backend
+ * alive until this returns; serialize against its unregister/destruction.
+ */
+int iap2_session_link(struct iap2_session *session, struct device *owner);
 
 #endif

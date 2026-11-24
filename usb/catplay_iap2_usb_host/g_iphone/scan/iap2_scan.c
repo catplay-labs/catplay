@@ -575,6 +575,25 @@ struct device *iap2_acc_device_get(struct iap2_acc_accessory *acc)
     return dev;
 }
 
+int iap2_acc_link_session(struct iap2_acc_accessory *acc, struct device *owner)
+{
+    struct usb_interface *intf;
+    int ret = -ENODEV;
+
+    if (!acc)
+        return ret;
+    /* Keep the active configuration/interface alive across lookup and link. */
+    usb_lock_device(acc->udev);
+    if (!iap2_acc_is_gone(acc)) {
+        intf = usb_ifnum_to_if(acc->udev, acc->iap2_ifnum);
+        if (intf)
+            ret = iap2_usb_bulk_link_session(intf, owner);
+    }
+    usb_unlock_device(acc->udev);
+    return ret;
+}
+EXPORT_SYMBOL_GPL(iap2_acc_link_session);
+
 static ssize_t vendor_id_show(struct device *dev,
                               struct device_attribute *attr, char *buf)
 {

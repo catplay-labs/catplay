@@ -133,12 +133,14 @@ static void iphone_dev_remove_iap2_link(struct iphone_dev_data *data)
 	iphone_dev_notify(data);
 }
 
-static int iphone_dev_add_iap2_link(struct iphone_dev_data *data)
+static int iphone_dev_add_iap2_link(struct iphone_dev_data *data,
+				    struct iap2_acc_accessory *acc)
 {
 	int ret;
 
 	iphone_dev_remove_iap2_link(data);
-	ret = iap2_session_link_active(data->owner_dev);
+	ret = acc ? iap2_acc_link_session(acc, data->owner_dev) :
+		iphone_hid_link_session(data->g.hid, data->owner_dev);
 	if (!ret)
 		data->iap2_link_added = true;
 	return ret;
@@ -211,7 +213,7 @@ static int iphone_dev_bind_gadget(struct iphone_dev_data *data)
 		return ret;
 	}
 	data->driver_registered = true;
-	ret = iphone_dev_add_iap2_link(data);
+	ret = iphone_dev_add_iap2_link(data, NULL);
 	if (ret) {
 		iphone_dev_unbind_gadget(data, -ENODEV);
 		return ret;
@@ -407,7 +409,7 @@ static void iphone_dev_role_switch_work(struct work_struct *work)
 	data->acc = acc;
 	ret = iphone_dev_add_accessory_link_locked(data, acc);
 	if (!ret)
-		ret = iphone_dev_add_iap2_link(data);
+		ret = iphone_dev_add_iap2_link(data, acc);
 	if (ret)
 		iphone_dev_clear_accessory_locked(data);
 	mutex_unlock(&data->lock);
