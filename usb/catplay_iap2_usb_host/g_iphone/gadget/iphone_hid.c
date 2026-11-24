@@ -80,9 +80,16 @@ static int submit_report(void *ctx, struct iap2_hid_report *report)
     hid->in_req->length = report->len;
     hid->in_req->zero = 0;
     hid->active = report;
-    ret = usb_ep_queue(hid->in, hid->in_req, GFP_ATOMIC);
-    if (ret) hid->active = NULL;
     spin_unlock_irqrestore(&hid->lock, flags);
+    /* The backend's out_mutex serializes submit with cancel/stop. Do not
+     * hold lock across queue: dummy_hcd can complete short reports inline.
+     */
+    ret = usb_ep_queue(hid->in, hid->in_req, GFP_ATOMIC);
+    if (ret) {
+        spin_lock_irqsave(&hid->lock, flags);
+        hid->active = NULL;
+        spin_unlock_irqrestore(&hid->lock, flags);
+    }
     return ret;
 }
 
