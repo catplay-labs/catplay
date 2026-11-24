@@ -480,7 +480,13 @@ impl Aes128CtrKernelStream {
 pub(crate) fn device_tree_allows_af_alg() -> bool {
     #[cfg(feature = "std")]
     {
-        const ALLOWED: &[&[u8]] = &[b"allwinner,v851s", b"allwinner,v821b", b"allwinner,v821", b"ingenic,x1600"];
+        const ALLOWED: &[&[u8]] = &[
+            b"allwinner,v851s",
+            b"allwinner,v821b",
+            b"allwinner,v821",
+            b"ingenic,x1600",
+            b"anyka,ak3918av130",
+        ];
         const PATHS: &[&[u8]] = &[b"/proc/device-tree/compatible\0", b"/sys/firmware/devicetree/base/compatible\0"];
 
         for path in PATHS {
