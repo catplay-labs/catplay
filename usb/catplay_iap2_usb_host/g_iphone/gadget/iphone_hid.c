@@ -27,8 +27,9 @@ struct iphone_hid {
     spinlock_t lock;
     wait_queue_head_t idle;
     unsigned int callbacks;
-    bool enabled, stopped, ctrl_pending;
+    bool enabled, stopped, ctrl_pending, rx_pending;
     u8 output_id, idle_rate;
+    size_t max_output_len;
 };
 
 static void in_complete(struct usb_ep *ep, struct usb_request *req)
@@ -166,7 +167,7 @@ static void control_complete(struct usb_ep *ep, struct usb_request *req)
 
     spin_lock_irqsave(&hid->lock, flags);
     hid->callbacks++;
-    receive = !hid->stopped && hid->output_id;
+    receive = !hid->stopped && hid->rx_pending;
     spin_unlock_irqrestore(&hid->lock, flags);
     if (receive && !req->status) {
 #if IPHONE_HID_VERBOSE
@@ -194,6 +195,7 @@ static void control_complete(struct usb_ep *ep, struct usb_request *req)
 #endif
     spin_lock_irqsave(&hid->lock, flags);
     hid->ctrl_pending = false;
+    hid->rx_pending = false;
     hid->callbacks--;
     wake_up_all(&hid->idle);
     spin_unlock_irqrestore(&hid->lock, flags);
@@ -216,16 +218,33 @@ int iphone_hid_setup(struct iphone_hid *hid, const struct usb_ctrlrequest *ctrl)
         switch (ctrl->bRequest) {
         case HID_REQ_SET_REPORT:
             pr_info("iPhone: HID_REQ_SET_REPORT");
-            if ((value >> 8) != 2 || !hid->reports.output[id]) {
+            if ((value >> 8) != 2) {
                 pr_info("iPhone: rejecting invalid HID report");
                 goto out;
             }
-            /* Violated by MBUX... */
-            if (len != hid->reports.output[id]) {
+            if (!hid->reports.output[id]) {
+                /* MIB3 uses an undeclared Output report (ID 0) for its whole
+                 * iAP2-over-HID exchange: the 8-byte link-init, then larger
+                 * frames (SYN/role negotiation). Accept any ID-0 report that
+                 * fits the control buffer, the way the iAP2-HID layer
+                 * tolerates MBUX's violations. */
+                if (id != 0 || !len || len > hid->max_output_len) {
+                    pr_info("iPhone: rejecting invalid HID report");
+                    goto out;
+                }
+                pr_info("iPhone: accepting undeclared output report id=0 len=%u (MIB3)", len);
+            } else if (len > hid->max_output_len) {
+                /* The MBUX length tolerance below must stay within the
+                 * control buffer. */
+                pr_info("iPhone: rejecting invalid HID report");
+                goto out;
+            } else if (len != hid->reports.output[id]) {
+                /* Violated by MBUX... */
                 pr_info("iPhone: accepting HID spec violation: request length does not match descriptor");
             }
 
             hid->output_id = id;
+            hid->rx_pending = true;
             req->length = len;
             break;
         case HID_REQ_SET_IDLE:
@@ -284,7 +303,10 @@ int iphone_hid_setup(struct iphone_hid *hid, const struct usb_ctrlrequest *ctrl)
     req->zero = req->length < len;
     hid->ctrl_pending = true;
     ret = usb_ep_queue(hid->func->config->cdev->gadget->ep0, req, GFP_ATOMIC);
-    if (ret) hid->ctrl_pending = false;
+    if (ret) {
+        hid->ctrl_pending = false;
+        hid->rx_pending = false;
+    }
 out:
     spin_unlock_irqrestore(&hid->lock, flags);
     return ret;
@@ -370,6 +392,7 @@ struct iphone_hid *iphone_hid_bind(struct usb_function *f, const struct usb_endp
     for (i = 1; i < 256; i++) {
         size_t len = hid->reports.input[i];
         max_len = max(max_len, max_t(size_t, len, hid->reports.output[i]));
+        hid->max_output_len = max(hid->max_output_len, (size_t)hid->reports.output[i]);
         if (!len) continue;
         hid->last[i] = kzalloc(len, GFP_KERNEL);
         if (!hid->last[i]) { ret = -ENOMEM; goto fail; }
