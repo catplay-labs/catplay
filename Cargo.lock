@@ -399,6 +399,7 @@ dependencies = [
  "catplay_iap2_usb",
  "catplay_iap2_usb_host",
  "catplay_lingo",
+ "catplay_mfi",
  "catplay_tracing",
  "catplay_util",
  "futures",

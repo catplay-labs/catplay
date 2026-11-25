@@ -10,6 +10,7 @@ catplay_iap2_client = { path = "../async/catplay_iap2_client" }
 catplay_util = { path = "../core/catplay_util" }
 catplay_tracing = { path = "../core/catplay_tracing" }
 catplay_hap = { path = "../core/catplay_hap" }
+catplay_mfi = { path = "../core/catplay_mfi" }
 catplay_bonjour = { path = "../core/catplay_bonjour" }
 catplay_carplay = { path = "../carplay/catplay_carplay" }
 catplay_csm = { path = "../core/catplay_csm" }

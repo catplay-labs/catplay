@@ -12,6 +12,7 @@ use catplay_lingo::{
     lingos::{LingoMessage, lingo_0x3 as display, lingo_0x4 as extended, lingo_0xa as audio},
     wire::{Outgoing, TransactionIntent},
 };
+use catplay_mfi::{MfiVersion, detect_mfi_version};
 use log::{debug, warn};
 
 #[derive(Default)]
@@ -717,9 +718,16 @@ impl CsmSession for CarPlayClientSession {
         }
 
         if let Some(_response) = packet.cast::<AuthenticationCertificate>() {
+            let certificate_len = _response.authentication_certificate.data.len();
+            let mfi_version = detect_mfi_version(&_response.authentication_certificate.data);
+            let challenge_len = match mfi_version {
+                MfiVersion::V2 => 20,
+                MfiVersion::V3 => 32,
+            };
+            debug!("Detected {mfi_version:?} device from {certificate_len}-byte certificate; sending {challenge_len}-byte challenge");
             self.send(
                 &RequestAuthenticationChallengeResponse {
-                    authentication_challenge: vec![0x42u8; 20].into(),
+                    authentication_challenge: vec![0x42u8; challenge_len].into(),
                 },
                 &_handle,
             )?;
@@ -926,6 +934,7 @@ mod legacy_tests {
         remote: CsmRemote,
         csm_count: Mutex<usize>,
         communications: Mutex<Vec<CommunicationsUpdate>>,
+        authentication_challenge_lengths: Mutex<Vec<usize>>,
         lingo: Mutex<Vec<Outgoing>>,
         lingo_link: Mutex<LingoLinkLayer>,
         sent_ids: Mutex<Vec<Option<u16>>>,
@@ -940,6 +949,7 @@ mod legacy_tests {
                 remote: CsmRemote::usb_gadget(),
                 csm_count: Mutex::new(0),
                 communications: Mutex::new(Vec::new()),
+                authentication_challenge_lengths: Mutex::new(Vec::new()),
                 lingo: Mutex::new(Vec::new()),
                 lingo_link: Mutex::new(lingo_link),
                 sent_ids: Mutex::new(Vec::new()),
@@ -974,6 +984,15 @@ mod legacy_tests {
         fn send(&self, packet: &dyn AsCsmPacket) -> CsmSessionResult<()> {
             if let Some(update) = packet.as_csm().cast::<CommunicationsUpdate>() {
                 self.communications.lock().unwrap().push(update.clone());
+            }
+            if let Some(challenge) = packet
+                .as_csm()
+                .cast::<RequestAuthenticationChallengeResponse>()
+            {
+                self.authentication_challenge_lengths
+                    .lock()
+                    .unwrap()
+                    .push(challenge.authentication_challenge.data.len());
             }
             *self.csm_count.lock().unwrap() += 1;
             Ok(())
@@ -1214,6 +1233,37 @@ mod legacy_tests {
         let handle = Handle::new(false);
         futures::executor::block_on(CarPlayClientSession::default().start(handle.clone())).unwrap();
         assert_eq!(*handle.csm_count.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn authentication_challenge_size_matches_mfi_certificate_generation() {
+        for (certificate_len, challenge_len) in [(1, 20), (606, 20), (607, 32), (609, 32), (610, 20), (1280, 20)] {
+            let handle = Handle::new(false);
+            let mut session = CarPlayClientSession::default();
+            let packet = AuthenticationCertificate {
+                authentication_certificate: vec![0; certificate_len].into(),
+            }
+            .into();
+
+            futures::executor::block_on(session.respond(packet, handle.clone())).unwrap();
+
+            assert_eq!(*handle.authentication_challenge_lengths.lock().unwrap(), vec![challenge_len]);
+        }
+    }
+
+    #[test]
+    fn authentication_challenge_defaults_unknown_certificate_sizes_to_mfi_v2() {
+        let handle = Handle::new(false);
+        let mut session = CarPlayClientSession::default();
+        for certificate_len in [0, 1281] {
+            let packet = AuthenticationCertificate {
+                authentication_certificate: vec![0; certificate_len].into(),
+            }
+            .into();
+
+            futures::executor::block_on(session.respond(packet, handle.clone())).unwrap();
+        }
+        assert_eq!(*handle.authentication_challenge_lengths.lock().unwrap(), vec![20, 20]);
     }
 
     #[test]
