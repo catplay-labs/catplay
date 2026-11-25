@@ -788,7 +788,7 @@ impl CsmSession for CarPlayClientSession {
                 //     &_handle,
                 // )?;
             }
-            
+
             // iPhone does this GPS probe, but:
             // - it's probably irrelevant for compatibility
             // - by placing it here we don't properly gate it to be after power negotiations
@@ -807,7 +807,6 @@ impl CsmSession for CarPlayClientSession {
                     &_handle,
                 )?;
                 self.send(&StopLocationInformation {}, &_handle)?;
-
             }
             /*
                        NowPlayingUpdate { media_item: Some(MediaItem { persistent_id: None, title: None, media_type: [], rating: None, playback_duration_in_ms: None, album_persistent_id: None, album_title: None, album_track_number: None, album_track_count: None, album_disc_number: None, album_disc_count: None, artist_persistent_id: None, artist: None, album_artist_persistent_id: None, album_artist: None, genre_persistent_id: None, genre: None, composer_persistent_id: None, composer: None, is_part_of_compilation: None, is_like_supported: None, is_ban_supported: None, is_liked: None, is_banned: None, is_resident_on_device: None, artwork_file_transfer_id: Some(129), chapter_count: None }), playback_attributes: None }
@@ -827,6 +826,35 @@ impl CsmSession for CarPlayClientSession {
         if let Some(snpu) = packet.cast::<StartNowPlayingUpdates>() {
             debug!("Got now playing request??: {snpu:?}");
             self.send_now_playing(_handle.clone())?;
+        }
+
+        if let Some(request) = packet.cast::<StartBluetoothConnectionUpdates>() {
+            for &bluetooth_transport_component_identifier in &request.bluetooth_transport_component_identifier {
+                self.send(
+                    &BluetoothConnectionUpdate {
+                        bluetooth_transport_component_identifier,
+                        connected_bluetooth_profiles: Some(ConnectedBluetoothProfiles {
+                            bluetooth_hands_free: CsmFlag::No,
+                            bluetooth_phone_book_access: CsmFlag::No,
+                            bluetooth_audio_video_remote_control: CsmFlag::No,
+                            bluetooth_advanced_audio_distribution: CsmFlag::No,
+                            bluetooth_human_interface_device: CsmFlag::No,
+                            bluetooth_sensor_service: CsmFlag::No,
+                            bluetooth_iap2_link: CsmFlag::Yes,
+                            bluetooth_personal_area_network_access_point: CsmFlag::No,
+                            bluetooth_message_access: CsmFlag::No,
+                            bluetooth_passthrough_service: CsmFlag::No,
+                            bluetooth_gaming_service: CsmFlag::No,
+                            bluetooth_personal_area_network_client: CsmFlag::No,
+                            bluetooth_braille_service: CsmFlag::No,
+                            bluetooth_multi_stream_service: CsmFlag::No,
+                            bluetooth_legatt_client: CsmFlag::No,
+                            bluetooth_lea: CsmFlag::No,
+                        }),
+                    },
+                    &_handle,
+                )?;
+            }
         }
 
         if packet.cast::<PowerSourceUpdate>().is_some() {
