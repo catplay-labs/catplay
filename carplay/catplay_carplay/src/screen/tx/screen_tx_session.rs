@@ -181,7 +181,7 @@ impl TcpSession for ScreenTransmitSession {
                     sink.write(ScreenFrame::config(&config))?;
                 }
                 ScreenTransmitOp::Frame(frame) => {
-                    warn!("Flushing video frame pts={:?} keyframe={}", frame.pts, frame.is_known_keyframe());
+                    debug!("Flushing video frame pts={:?} keyframe={}", frame.pts, frame.is_known_keyframe());
                     let screen_frame = ScreenFrame::video_proxied(frame, self.nal_size_len, self.clock.as_ref())
                         .map_err(|e| RtspError::UnexpectedState(format!("unexpected failure during NAL serialization: {e:?}")))?;
                     if self.keep_alive_send_stats_as_body {
