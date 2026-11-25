@@ -1,7 +1,7 @@
 use aes::Aes128;
 use aes::cipher::{KeyIvInit, StreamCipher};
 use alloc::{string::String, string::ToString, sync::Arc, vec::Vec};
-use catplay_mfi::MfiDevice;
+use catplay_mfi::{MfiDevice, MfiVersion, detect_mfi_version};
 use ctr::Ctr128BE;
 use log::debug;
 
@@ -160,12 +160,16 @@ impl MfiSapSession {
 
         // Hash (server_pubkey || client_pubkey)
         let cert = mfi.read_certificate().map_err(|e| e.to_string())?;
-        let digest = if cert.len() > 640 {
-            debug!("Old chip, using sha1 for auth-setup");
-            sha1_salt(server_pubkey.as_ref(), &client_pubkey).to_vec()
-        } else {
-            debug!("Modern chip, using sha256 for auth-setup");
-            sha256_salt(server_pubkey.as_ref(), &client_pubkey).to_vec()
+        let mfi_version = detect_mfi_version(&cert);
+        let digest = match mfi_version {
+            MfiVersion::V2 => {
+                debug!("MFi 2.0 chip, using SHA-1 auth challenge");
+                sha1_salt(server_pubkey.as_ref(), &client_pubkey).to_vec()
+            }
+            MfiVersion::V3 => {
+                debug!("MFi 3.0 chip, using SHA-256 auth challenge");
+                sha256_salt(server_pubkey.as_ref(), &client_pubkey).to_vec()
+            }
         };
 
         // Sign with MFi
@@ -265,22 +269,58 @@ impl MfiSapSession {
 mod tests {
     use super::*;
     use catplay_mfi::MfiResult;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    struct TestMfiDevice;
+    struct TestMfiDevice {
+        cert_len: usize,
+        challenge_len: Arc<AtomicUsize>,
+    }
 
     impl MfiDevice for TestMfiDevice {
         fn read_certificate(&self) -> MfiResult<Vec<u8>> {
-            Ok(vec![0x42; 641])
+            Ok(vec![0x42; self.cert_len])
         }
 
         fn generate_challenge_response(&self, challenge: &[u8]) -> MfiResult<Vec<u8>> {
+            self.challenge_len.store(challenge.len(), Ordering::Relaxed);
             Ok(challenge.iter().copied().cycle().take(64).collect())
         }
     }
 
     #[test]
+    fn detects_mfi_version_from_certificate_length() {
+        assert_eq!(detect_mfi_version(&vec![0; 607]), MfiVersion::V3);
+        assert_eq!(detect_mfi_version(&vec![0; 608]), MfiVersion::V3);
+        assert_eq!(detect_mfi_version(&vec![0; 609]), MfiVersion::V3);
+        assert_eq!(detect_mfi_version(&vec![0; 606]), MfiVersion::V2);
+        assert_eq!(detect_mfi_version(&vec![0; 610]), MfiVersion::V2);
+        assert_eq!(detect_mfi_version(&vec![0; 1280]), MfiVersion::V2);
+        assert_eq!(detect_mfi_version(&[]), MfiVersion::V2);
+        assert_eq!(detect_mfi_version(&vec![0; 1281]), MfiVersion::V2);
+    }
+
+    #[test]
+    fn uses_mfi_version_specific_auth_challenge_length() {
+        for (cert_len, challenge_len) in [(608, 32), (610, 20)] {
+            let recorded_len = Arc::new(AtomicUsize::new(0));
+            let mfi = Arc::new(TestMfiDevice {
+                cert_len,
+                challenge_len: recorded_len.clone(),
+            });
+            let (_client, request) = MfiSapSession::client().unwrap();
+
+            MfiSapSession::server().handle(mfi, &request).unwrap();
+
+            assert_eq!(recorded_len.load(Ordering::Relaxed), challenge_len, "cert_len={cert_len}");
+        }
+    }
+
+    #[test]
     fn iphone_reverse_auth_setup_round_trip() {
-        let mfi = Arc::new(TestMfiDevice);
+        let mfi = Arc::new(TestMfiDevice {
+            cert_len: 641,
+            challenge_len: Arc::new(AtomicUsize::new(0)),
+        });
         let (client, client_request) = MfiSapSession::client().unwrap();
         let server = MfiSapSession::server();
 
