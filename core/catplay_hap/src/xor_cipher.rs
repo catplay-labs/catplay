@@ -1,8 +1,12 @@
 //! Shared XOR for cached AES and ChaCha keystreams.
 
-// Keep the generic byte loop for other targets: it has been tested to produce
-// optimally vectorized code for ARMv7 NEON.
-#[cfg(not(any(target_arch = "mips", target_arch = "riscv32")))]
+// Keep the generic byte loop for NEON-capable ARM and other targets: it has
+// been tested to produce optimally vectorized code for ARMv7 NEON.
+#[cfg(not(any(
+    target_arch = "mips",
+    target_arch = "riscv32",
+    all(target_arch = "arm", not(target_feature = "neon"))
+)))]
 pub(crate) fn xor(dst: &mut [u8], keystream: &[u8]) {
     debug_assert_eq!(dst.len(), keystream.len());
     for (byte, key) in dst.iter_mut().zip(keystream) {
@@ -10,7 +14,11 @@ pub(crate) fn xor(dst: &mut [u8], keystream: &[u8]) {
     }
 }
 
-#[cfg(any(target_arch = "mips", target_arch = "riscv32"))]
+#[cfg(any(
+    target_arch = "mips",
+    target_arch = "riscv32",
+    all(target_arch = "arm", not(target_feature = "neon"))
+))]
 #[inline(always)]
 fn xor_word(dst: &mut u32, src: *const u8) {
     // SAFETY: Caller guarantees at least 4 readable bytes.
@@ -18,7 +26,11 @@ fn xor_word(dst: &mut u32, src: *const u8) {
     *dst ^= key;
 }
 
-#[cfg(any(target_arch = "mips", target_arch = "riscv32"))]
+#[cfg(any(
+    target_arch = "mips",
+    target_arch = "riscv32",
+    all(target_arch = "arm", not(target_feature = "neon"))
+))]
 pub(crate) fn xor(dst: &mut [u8], keystream: &[u8]) {
     debug_assert_eq!(dst.len(), keystream.len());
 
