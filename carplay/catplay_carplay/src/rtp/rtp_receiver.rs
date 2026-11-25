@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, time::Duration};
 
 use catplay_tokio::UdpHelper;
-use catplay_util::{ArcBox, AsyncShutdown, EventReconciler, EventSleeper};
+use catplay_util::{ArcBox, AsyncShutdown, EventReconciler, EventSleeper, spawn_fork};
 use log::{debug, warn};
 
 use crate::{
@@ -14,7 +14,10 @@ use crate::{
     },
     cipher::AirPlayStreamEncryption,
     msg::{StreamDescriptionAudio, StreamDescriptionResponse, StreamType},
-    rtp::{RTP_BUFFER_PAD, RTP_PACKET_MAX, RtcpSession, play::RtpSession, record::RtpSessionTx},
+    rtp::{
+        AudioCodecRole, AudioThreadDirection, RTP_BUFFER_PAD, RTP_PACKET_MAX, RtcpSession, audio_thread_name, play::RtpSession,
+        record::RtpSessionTx,
+    },
     rtsp_frame::{RtspError, RtspResult},
 };
 
@@ -88,13 +91,16 @@ impl RtpReceiver {
         session: RtpSession<AudioDecoderDispatch>,
         mut session_tx: Option<RtpSessionTx<AudioEncoderDispatch>>,
     ) -> RtspResult<Self> {
-        let mut socket_tx = None;
-        let session_ctrl = RtcpSession {};
-
         bind_ip.set_port(0);
-        let socket_rx = UdpHelper::bind(bind_ip, session)?;
+        let (socket_rx, socket_ctrl) = spawn_fork(
+            &audio_thread_name(d.stream_type, AudioThreadDirection::Rx, AudioCodecRole::Decode),
+            move || {
+                let socket_rx = UdpHelper::bind(bind_ip, session)?;
+                let socket_ctrl = UdpHelper::bind(bind_ip, RtcpSession {})?;
+                Ok::<_, RtspError>((socket_rx, socket_ctrl))
+            },
+        )?;
         debug!("Bind RTP: {}", socket_rx.1);
-        let socket_ctrl = UdpHelper::bind(bind_ip, session_ctrl)?;
         debug!("Bind RTCP: {}", socket_ctrl.1);
 
         if let Some(control_port) = d.control_port {
@@ -104,7 +110,7 @@ impl RtpReceiver {
             socket_ctrl.0.connect_finish(rtcp_remote)?;
         }
 
-        if let Some(session_tx) = session_tx.take() {
+        let socket_tx = if let Some(session_tx) = session_tx.take() {
             debug!("Attaching recorder sink to RTP session");
             let Some(data_port) = d.data_port else {
                 return Err(RtspError::ProtocolViolationGeneric);
@@ -113,10 +119,15 @@ impl RtpReceiver {
             let mut rtp_remote = peer_ip;
             rtp_remote.set_port(data_port);
 
-            let (socket, rtp_remote_bind, _) = UdpHelper::connect(rtp_remote, session_tx)?;
+            let (socket, rtp_remote_bind, _) = spawn_fork(
+                &audio_thread_name(d.stream_type, AudioThreadDirection::Tx, AudioCodecRole::Encode),
+                move || UdpHelper::connect(rtp_remote, session_tx),
+            )?;
             debug!("RTP connect tx: {rtp_remote_bind} -> {rtp_remote}");
-            socket_tx.replace(socket);
-        }
+            Some(socket)
+        } else {
+            None
+        };
 
         Ok(Self {
             _stream: d.clone(),
@@ -178,20 +189,26 @@ impl RtpReceiver {
 
         let latency = Duration::from_millis(d.audio_latency_ms);
         let stream_connection_id = d.stream_connection_id;
-        let mut socket_rx = None;
-        let session_ctrl = RtcpSession {};
-
         bind_ip.set_port(0);
-
-        if let Some((codec, sink)) = player {
-            debug!("Attaching player sink to RTP TX session");
-            let session = RtpSession::new(encryption, stream_connection_id, latency, codec, sink, false)?;
-            let socket = UdpHelper::bind(bind_ip, session)?;
-            d.data_port.replace(socket.1.port());
-            socket_rx.replace(socket.0);
+        let stream_type = d.stream_type;
+        let (socket_rx, socket_ctrl, local_data_port) = spawn_fork(
+            &audio_thread_name(stream_type, AudioThreadDirection::Rx, AudioCodecRole::Decode),
+            move || {
+                let (socket_rx, local_data_port) = if let Some((codec, sink)) = player {
+                    debug!("Attaching player sink to RTP TX session");
+                    let session = RtpSession::new(encryption, stream_connection_id, latency, codec, sink, false)?;
+                    let socket = UdpHelper::bind(bind_ip, session)?;
+                    (Some(socket.0), Some(socket.1.port()))
+                } else {
+                    (None, None)
+                };
+                let socket_ctrl = UdpHelper::bind(bind_ip, RtcpSession {})?;
+                Ok::<_, RtspError>((socket_rx, socket_ctrl, local_data_port))
+            },
+        )?;
+        if let Some(data_port) = local_data_port {
+            d.data_port.replace(data_port);
         }
-
-        let socket_ctrl = UdpHelper::bind(bind_ip, session_ctrl)?;
         debug!("Bind RTCP: {}", socket_ctrl.1);
         d.control_port.replace(socket_ctrl.1.port());
 
@@ -243,7 +260,10 @@ impl RtpReceiver {
             socket_ctrl.connect_finish(rtcp_remote)?;
         }
 
-        let (socket, rtp_remote_bind, _) = UdpHelper::connect(rtp_remote, session)?;
+        let (socket, rtp_remote_bind, _) = spawn_fork(
+            &audio_thread_name(d.stream_type, AudioThreadDirection::Tx, AudioCodecRole::Encode),
+            move || UdpHelper::connect(rtp_remote, session),
+        )?;
         debug!("RTP connect tx: {rtp_remote_bind} -> {rtp_remote}");
 
         self.socket_tx.replace(socket);
