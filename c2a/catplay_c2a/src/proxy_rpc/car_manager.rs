@@ -478,7 +478,7 @@ impl CarManager {
         let car = self.car_state.clone();
 
         let info_patched = {
-            let other = car.info_cached().clone();
+            let mut other = car.info_cached().clone();
             info!("CarPlay info of the car: {other:?}");
 
             // Sync data based on car probe
@@ -487,16 +487,14 @@ impl CarManager {
             filter_audio_sample_rates(&mut info.audio_formats, &other.audio_formats);
             let info_clone = info.clone();
 
-            let mut displays = other.displays;
-            let mut hid_devices = other.hid_devices;
             if !self.iphone_features.contains(&ControllerFeature::AltScreen) {
                 // Without altScreen only the main display can be driven. Advertising additional displays (e.g. an instrument cluster)
                 // anyway makes the iPhone tear down the session right after RECORD.
-                restrict_to_main_display(&mut displays, &mut hid_devices);
+                restrict_to_main_display(&mut other);
             }
 
             InfoMessageResponse {
-                hid_devices,
+                hid_devices: other.hid_devices,
                 hid_languages: other.hid_languages,
                 right_hand_drive: other.right_hand_drive,
 
@@ -510,7 +508,7 @@ impl CarManager {
 
                 manufacturer: other.manufacturer,
                 model: other.model,
-                displays,
+                displays: other.displays,
 
                 audio_latencies: other.audio_latencies,
                 features: other.features,
@@ -730,16 +728,9 @@ fn negotiate_proxied_features(offered: &[ControllerFeature], car_enabled: &[Cont
         .collect()
 }
 
-/// Keeps only the main display, and the HID devices that belong to it.
-///
-/// This assumes that the car lists its main display first, which holds for all head units observed so far.
-fn restrict_to_main_display(displays: &mut Vec<Display>, hid_devices: &mut Vec<HidDevice>) {
-    displays.truncate(1);
-    hid_devices.retain(|hid| {
-        displays
-            .iter()
-            .any(|display| display.uuid == hid.display_uuid)
-    });
+/// Keeps only the main display while preserving the car's complete HID list.
+fn restrict_to_main_display(info: &mut InfoMessageResponse) {
+    info.displays.truncate(1);
 }
 
 impl Drop for CarManager {
@@ -757,9 +748,6 @@ impl Drop for CarManager {
 mod tests {
     use super::*;
 
-    const MAIN_UUID: &str = "e5f7a68d-7b0f-4305-984b-974f677a150b";
-    const CLUSTER_UUID: &str = "b7e6c5a0-2222-4000-8000-000000000002";
-
     /// Subset of the features offered by the iPhone in the logs of issue #40.
     const IPHONE_OFFERED: [ControllerFeature; 5] = [
         ControllerFeature::UiContext,
@@ -768,6 +756,9 @@ mod tests {
         ControllerFeature::H264Level51,
         ControllerFeature::AltScreen,
     ];
+
+    const MAIN_UUID: &str = "e5f7a68d-7b0f-4305-984b-974f677a150b";
+    const CLUSTER_UUID: &str = "b7e6c5a0-2222-4000-8000-000000000002";
 
     fn display(uuid: &str) -> Display {
         Display {
@@ -782,6 +773,38 @@ mod tests {
             display_uuid: display_uuid.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn restricting_to_main_display_preserves_hid_devices_on_other_displays() {
+        let main_hid = hid_device("touch", MAIN_UUID);
+        let synthetic_hid = hid_device("media keys", CLUSTER_UUID);
+        let mut info = InfoMessageResponse {
+            displays: vec![display(MAIN_UUID), display(CLUSTER_UUID)],
+            hid_devices: vec![main_hid.clone(), synthetic_hid.clone()],
+            ..Default::default()
+        };
+
+        restrict_to_main_display(&mut info);
+
+        assert_eq!(info.displays, vec![display(MAIN_UUID)]);
+        assert_eq!(info.hid_devices, vec![main_hid, synthetic_hid]);
+    }
+
+    #[test]
+    fn restricting_a_single_display_preserves_all_hid_devices() {
+        let main_hid = hid_device("touch", MAIN_UUID);
+        let synthetic_hid = hid_device("media keys", CLUSTER_UUID);
+        let mut info = InfoMessageResponse {
+            displays: vec![display(MAIN_UUID)],
+            hid_devices: vec![main_hid.clone(), synthetic_hid.clone()],
+            ..Default::default()
+        };
+
+        restrict_to_main_display(&mut info);
+
+        assert_eq!(info.displays, vec![display(MAIN_UUID)]);
+        assert_eq!(info.hid_devices, vec![main_hid, synthetic_hid]);
     }
 
     #[test]
@@ -826,27 +849,5 @@ mod tests {
     #[test]
     fn negotiation_enables_nothing_without_car_features() {
         assert!(negotiate_proxied_features(&IPHONE_OFFERED, &[]).is_empty());
-    }
-
-    #[test]
-    fn restricting_drops_secondary_displays_and_their_hid_devices() {
-        let mut displays = vec![display(MAIN_UUID), display(CLUSTER_UUID)];
-        let mut hid_devices = vec![hid_device("touch", MAIN_UUID), hid_device("knob", CLUSTER_UUID)];
-
-        restrict_to_main_display(&mut displays, &mut hid_devices);
-
-        assert_eq!(displays, vec![display(MAIN_UUID)]);
-        assert_eq!(hid_devices, vec![hid_device("touch", MAIN_UUID)]);
-    }
-
-    #[test]
-    fn restricting_keeps_a_single_display_unchanged() {
-        let mut displays = vec![display(MAIN_UUID)];
-        let mut hid_devices = vec![hid_device("touch", MAIN_UUID), hid_device("knob", MAIN_UUID)];
-
-        restrict_to_main_display(&mut displays, &mut hid_devices);
-
-        assert_eq!(displays, vec![display(MAIN_UUID)]);
-        assert_eq!(hid_devices.len(), 2);
     }
 }
