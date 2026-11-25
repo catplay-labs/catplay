@@ -408,7 +408,7 @@ plist_struct! {
         pub hid_country_code: Option<u16>,
         pub hid_descriptor: PlistByteArray,
         #[serde(rename = "hidProductID")]
-        pub hid_product_id: Option<u16>,
+        pub hid_product_id: Option<u32>,
         #[serde(rename = "hidVendorID")]
         pub hid_vendor_id: Option<u16>,
         pub name: String,
