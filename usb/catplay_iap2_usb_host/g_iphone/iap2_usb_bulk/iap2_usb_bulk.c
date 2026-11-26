@@ -40,6 +40,11 @@ struct iap2_usb {
     struct usb_interface *intf;
     u8 ep_in;
     u8 ep_out;
+    /* some accessories add an interrupt in endpoint to the iap2 interface.
+     * it is kept polled, the payload is unused
+     */
+    struct urb *int_urb;
+    u8 *int_buf;
     struct iap2_session *session;
     const struct iap2_transport_events *events;
     spinlock_t rx_lock;
@@ -129,6 +134,25 @@ static void iap2_usb_rx_complete(struct urb *urb)
     spin_unlock_irqrestore(&usb->rx_lock, flags);
 }
 
+static void iap2_usb_int_complete(struct urb *urb)
+{
+    struct iap2_usb *usb = urb->context;
+    int ret;
+
+    /* a killed or unlinked urb ends the polling */
+    if (urb->status == -ENOENT || urb->status == -ECONNRESET ||
+        urb->status == -ESHUTDOWN || urb->status == -ENODEV)
+        return;
+    if (urb->status) {
+        dev_warn(&usb->intf->dev, "interrupt polling stopped: %d\n", urb->status);
+        return;
+    }
+    ret = usb_submit_urb(urb, GFP_ATOMIC);
+    /* usb_kill_urb rejects the resubmit with -EPERM while stop runs */
+    if (ret && ret != -EPERM && ret != -ENODEV)
+        dev_warn(&usb->intf->dev, "interrupt polling stopped: %d\n", ret);
+}
+
 static void iap2_usb_rx_work(struct work_struct *work)
 {
     struct iap2_usb *usb = container_of(to_delayed_work(work), struct iap2_usb, rx_work);
@@ -212,6 +236,13 @@ static int iap2_usb_start(void *ctx, const struct iap2_transport_events *events,
     usb->session = session;
     WRITE_ONCE(usb->stopping, false);
     iap2_usb_kick_rx(usb);
+    if (usb->int_urb) {
+        int ret = usb_submit_urb(usb->int_urb, GFP_KERNEL);
+
+        /* the bulk pipes still work for accessories that do not need the polling */
+        if (ret)
+            dev_warn(&usb->intf->dev, "interrupt polling not started: %d\n", ret);
+    }
     return 0;
 }
 
@@ -256,6 +287,7 @@ static void iap2_usb_stop(void *ctx, int reason)
         usb_kill_urb(usb->tx[i].urb);
     for (i = 0; i < IAP2_RX_INFLIGHT; i++)
         usb_kill_urb(usb->rx[i].urb);
+    usb_kill_urb(usb->int_urb);
     dev_dbg(&usb->intf->dev, "session stopped: %d\n", reason);
 }
 
@@ -277,6 +309,8 @@ static void iap2_usb_free(struct iap2_usb *usb)
         usb_free_urb(usb->rx[i].urb);
         kfree(usb->rx[i].buf);
     }
+    usb_free_urb(usb->int_urb);
+    kfree(usb->int_buf);
     usb_put_dev(usb->udev);
     kfree(usb);
 }
@@ -295,6 +329,7 @@ EXPORT_SYMBOL_GPL(iap2_usb_bulk_devnode_path);
 static int iap2_usb_probe(struct usb_interface *intf, const struct usb_device_id *id)
 {
     struct usb_host_interface *alts = intf->cur_altsetting;
+    struct usb_endpoint_descriptor *ep_int = NULL;
     struct iap2_usb *usb;
     struct iap2_session *session;
     int ret, i;
@@ -316,6 +351,8 @@ static int iap2_usb_probe(struct usb_interface *intf, const struct usb_device_id
             usb->ep_in = ep->bEndpointAddress;
         else if (usb_endpoint_is_bulk_out(ep) && !usb->ep_out)
             usb->ep_out = ep->bEndpointAddress;
+        else if (usb_endpoint_is_int_in(ep) && !ep_int)
+            ep_int = ep;
     }
     if (!usb->ep_in || !usb->ep_out) {
         ret = -ENODEV;
@@ -343,6 +380,20 @@ static int iap2_usb_probe(struct usb_interface *intf, const struct usb_device_id
         usb_fill_bulk_urb(rx->urb, usb->udev,
                           usb_rcvbulkpipe(usb->udev, usb->ep_in),
                           rx->buf, IAP2_MAX_XFER, iap2_usb_rx_complete, rx);
+    }
+    if (ep_int && usb_endpoint_maxp(ep_int)) {
+        int maxp = usb_endpoint_maxp(ep_int);
+
+        usb->int_buf = kmalloc(maxp, GFP_KERNEL);
+        usb->int_urb = usb_alloc_urb(0, GFP_KERNEL);
+        if (!usb->int_buf || !usb->int_urb) {
+            ret = -ENOMEM;
+            goto free;
+        }
+        usb_fill_int_urb(usb->int_urb, usb->udev,
+                         usb_rcvintpipe(usb->udev, ep_int->bEndpointAddress),
+                         usb->int_buf, maxp, iap2_usb_int_complete, usb,
+                         ep_int->bInterval);
     }
     session = iap2_session_register(&intf->dev, &iap2_usb_ops, usb);
     if (IS_ERR(session)) {
