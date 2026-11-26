@@ -278,6 +278,84 @@ mod display_tests {
     use catplay_plist::{Dictionary, Value, from_bytes, to_writer_binary};
 
     #[test]
+    fn info_response_preserves_zero_primary_input_device_on_main_and_alt_displays() {
+        let response = InfoMessageResponse {
+            displays: vec![
+                Display {
+                    uuid: "main".into(),
+                    ..Default::default()
+                },
+                Display {
+                    uuid: "cluster".into(),
+                    stream_type: Some(StreamType::AltScreen),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let Value::Dictionary(mut info) = catplay_plist::to_value(&response).unwrap() else {
+            panic!("expected an info dictionary");
+        };
+        let Value::Array(displays) = info.get_mut("displays").unwrap() else {
+            panic!("expected displays");
+        };
+        for display in displays.iter_mut() {
+            let Value::Dictionary(display) = display else {
+                panic!("expected a display dictionary");
+            };
+            display.insert("primaryInputDevice".into(), Value::from(0u64));
+        }
+        let expected_displays = Value::Array(displays.clone());
+        // Audi MIB2 also sends this currently unmodeled field in /info.
+        info.insert(
+            "displayPanels".into(),
+            Value::Array(vec![Value::Dictionary(Dictionary::from_iter([(
+                "primaryInputDevice",
+                Value::from(0u64),
+            )]))]),
+        );
+
+        let mut binary = Vec::new();
+        to_writer_binary(&mut binary, &Value::Dictionary(info)).unwrap();
+        let decoded: InfoMessageResponse = from_bytes(&binary).unwrap();
+        assert_eq!(decoded.displays.len(), 2);
+        assert_eq!(decoded.displays[1].stream_type, Some(StreamType::AltScreen));
+        for display in &decoded.displays {
+            assert_eq!(display.primary_input_device.map(|input| input as u8), Some(0));
+        }
+
+        binary.clear();
+        to_writer_binary(&mut binary, &decoded).unwrap();
+        let Value::Dictionary(encoded) = from_bytes::<Value>(&binary).unwrap() else {
+            panic!("expected an info dictionary");
+        };
+        assert_eq!(encoded.get("displays"), Some(&expected_displays));
+    }
+
+    #[test]
+    fn primary_input_device_retains_known_values_default_and_strict_validation() {
+        assert_eq!(PrimaryInputDevice::default(), PrimaryInputDevice::TouchScreen);
+        assert_eq!(Display::default().primary_input_device, None);
+        for (value, expected) in [
+            (1u64, PrimaryInputDevice::TouchScreen),
+            (2, PrimaryInputDevice::Touchpad),
+            (3, PrimaryInputDevice::Knob),
+        ] {
+            let mut binary = Vec::new();
+            to_writer_binary(&mut binary, &Value::from(value)).unwrap();
+            assert_eq!(from_bytes::<PrimaryInputDevice>(&binary).unwrap(), expected);
+            binary.clear();
+            to_writer_binary(&mut binary, &expected).unwrap();
+            assert_eq!(from_bytes::<Value>(&binary).unwrap(), Value::from(value));
+        }
+        for value in [4u64, 255] {
+            let mut binary = Vec::new();
+            to_writer_binary(&mut binary, &Value::from(value)).unwrap();
+            assert!(from_bytes::<PrimaryInputDevice>(&binary).is_err());
+        }
+    }
+
+    #[test]
     fn alt_display_round_trips_without_losing_keys() {
         // Values observed for the instrument cluster in the /info response of a VW MMX head unit.
         let safe_area = Value::Dictionary(Dictionary::from_iter([

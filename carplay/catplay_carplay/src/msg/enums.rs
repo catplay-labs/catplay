@@ -16,6 +16,8 @@ plist_bitflags! {
 plist_enum_repr! {
     #[repr(u8)]
     pub enum PrimaryInputDevice {
+        /// Legacy head units report zero without a known input type.
+        Unknown = 0,
         /// Accessory uses touchscreen as primary input.
         #[default]
         TouchScreen = 1,
